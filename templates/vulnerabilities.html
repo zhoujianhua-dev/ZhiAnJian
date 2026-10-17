@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}漏洞库{% endblock %}
+{% block page_title %}漏洞知识库{% endblock %}
+{% block page_crumb %}漏洞库 / 漏洞描述管理{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="toolbar">
+    <input class="input" id="kw" placeholder="按漏洞名称搜索..." style="width:220px" onkeydown="if(event.key==='Enter')loadVulns(1)">
+    <select class="select" id="sevFilter" style="width:130px" onchange="loadVulns(1)">
+      <option value="">全部等级</option>
+      <option value="critical">严重</option><option value="high">高危</option>
+      <option value="medium">中危</option><option value="low">低危</option>
+      <option value="info">信息</option><option value="unknown">未知</option>
+    </select>
+    <button class="btn btn-primary" onclick="loadVulns(1)">搜索</button>
+    <span class="spacer"></span>
+    <button class="btn btn-primary btn-sm" onclick="openAdd()">+ 新增漏洞</button>
+  </div>
+  <div class="table-wrap" id="vulnTable"><div class="loading-mask"><div class="spinner"></div>加载中...</div></div>
+  <div class="pagination" id="vulnPager"></div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+let curPage = 1, curLimit = 10, totalCount = 0;
+
+async function loadVulns(page) {
+  curPage = page;
+  const kw = document.getElementById("kw").value.trim();
+  const sev = document.getElementById("sevFilter").value;
+  const el = document.getElementById("vulnTable");
+  ZhiShield.showLoading(el);
+  const r = await ZhiShield.api(`/api/vulnerabilities?page=${page}&limit=${curLimit}&name=${encodeURIComponent(kw)}&severity=${sev}`);
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  totalCount = r.count;
+  if (!r.data.length) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-title">暂无漏洞数据</div><div class="empty-desc">维护漏洞知识库，新建报告时可快速引用</div></div>`;
+  } else {
+    let html = `<table class="data-table"><thead><tr>
+      <th>ID</th><th>漏洞名称</th><th>等级</th><th>漏洞描述</th><th>更新时间</th><th>操作</th></tr></thead><tbody>`;
+    r.data.forEach(v => {
+      html += `<tr>
+        <td>${v.id}</td>
+        <td style="font-weight:600;max-width:220px">${ZhiShield.esc(v.name)}</td>
+        <td>${ZhiShield.sevBadge(v.severity)}</td>
+        <td style="max-width:380px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ZhiShield.esc(v.description || "-")}</td>
+        <td style="font-size:12px;color:#94a3b8">${ZhiShield.fmtTime(v.updated_at)}</td>
+        <td style="white-space:nowrap">
+          <a class="link-btn" onclick="viewVuln(${v.id})">详情</a>
+          <a class="link-btn" onclick="editVuln(${v.id})">编辑</a>
+          <a class="link-btn danger" onclick="delVuln(${v.id},'${ZhiShield.esc(v.name).replace(/'/g,"\\'")}')">删除</a>
+        </td></tr>`;
+    });
+    el.innerHTML = html + "</tbody></table>";
+  }
+  ZhiShield.renderPagination(document.getElementById("vulnPager"), curPage, totalCount, curLimit, loadVulns);
+}
+
+function vulnForm(u = {}) {
+  const v = (k) => ZhiShield.esc(u[k] || "");
+  // input 为空元素，值必须放在 value 属性；textarea 才用标签体（否则编辑时输入框回填为空）
+  const f = (k, label, ph = "", type = "input") => type === "textarea"
+    ? `<div class="form-item"><label>${label}</label>
+       <textarea class="textarea" id="v_${k}" placeholder="${ph}" rows="3">${v(k)}</textarea></div>`
+    : `<div class="form-item"><label>${label}</label>
+       <input class="input" id="v_${k}" placeholder="${ph}" value="${v(k)}"></div>`;
+  return `<div class="form-grid">
+    ${f("name", "漏洞名称", "如：SQL 注入漏洞")}
+    <div class="form-item"><label>漏洞等级</label><select class="select" id="v_severity">
+      ${["critical","high","medium","low","info","unknown"].map(s =>
+        `<option value="${s}" ${u.severity===s?"selected":""}>${({critical:"严重",high:"高危",medium:"中危",low:"低危",info:"信息",unknown:"未知"})[s]}</option>`).join("")}
+    </select></div>
+    ${f("description", "漏洞描述", "", "textarea")}
+    ${f("harm", "漏洞危害", "", "textarea")}
+    ${f("suggestion", "整改建议", "", "textarea")}
+  </div>`;
+}
+
+function openAdd() {
+  ZhiShield.openModal({ title: "新增漏洞", size: "lg", body: vulnForm(),
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doAdd()">保存</button>` });
+}
+async function doAdd() {
+  const body = { name: document.getElementById("v_name").value.trim(),
+    severity: document.getElementById("v_severity").value,
+    description: document.getElementById("v_description").value,
+    harm: document.getElementById("v_harm").value,
+    suggestion: document.getElementById("v_suggestion").value };
+  if (!body.name) { ZhiShield.error("请输入漏洞名称"); return; }
+  const r = await ZhiShield.api("/api/vulnerability/add", { json: body });
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadVulns(1); }
+  else ZhiShield.error(r.msg);
+}
+
+async function viewVuln(id) {
+  const r = await ZhiShield.api("/api/vulnerability/detail?id=" + id);
+  if (r.code !== 0) return;
+  const v = r.data;
+  ZhiShield.openModal({ title: "漏洞详情", size: "lg", body: `
+    <div class="kv-row"><div class="k">漏洞名称</div><div class="v">${ZhiShield.esc(v.name)}</div></div>
+    <div class="kv-row"><div class="k">漏洞等级</div><div class="v">${ZhiShield.sevBadge(v.severity)}</div></div>
+    <div class="kv-row"><div class="k">漏洞描述</div><div class="v">${ZhiShield.esc(v.description || "-")}</div></div>
+    <div class="kv-row"><div class="k">漏洞危害</div><div class="v">${ZhiShield.esc(v.harm || "-")}</div></div>
+    <div class="kv-row"><div class="k">整改建议</div><div class="v">${ZhiShield.esc(v.suggestion || "-")}</div></div>`,
+    footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>` });
+}
+
+async function editVuln(id) {
+  const r = await ZhiShield.api("/api/vulnerability/detail?id=" + id);
+  if (r.code !== 0) return;
+  ZhiShield.openModal({ title: "编辑漏洞", size: "lg", body: vulnForm(r.data),
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doEdit(${id})">保存</button>` });
+}
+async function doEdit(id) {
+  const r = await ZhiShield.api("/api/vulnerability/update", { json: {
+    id, name: document.getElementById("v_name").value.trim(),
+    severity: document.getElementById("v_severity").value,
+    description: document.getElementById("v_description").value,
+    harm: document.getElementById("v_harm").value,
+    suggestion: document.getElementById("v_suggestion").value } });
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadVulns(curPage); }
+  else ZhiShield.error(r.msg);
+}
+
+function delVuln(id, name) {
+  ZhiShield.confirmDialog(`确定删除漏洞「${name}」？`, async () => {
+    const r = await ZhiShield.api("/api/vulnerability/delete", { json: { id } });
+    if (r.code === 0) { ZhiShield.success("已删除"); loadVulns(curPage); } else ZhiShield.error(r.msg);
+  }, "删除");
+}
+
+loadVulns(1);
+</script>
+{% endblock %}

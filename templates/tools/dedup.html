@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}文本去重{% endblock %}
+{% block page_title %}文本行去重{% endblock %}
+{% block page_crumb %}工具 / 数据清洗{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <div class="form-item"><label>输入文本（每行一条，支持域名/IP/URL 等任意文本）</label>
+      <textarea class="textarea" id="dupText" rows="10" placeholder="example.com&#10;example.com&#10;www.example.com&#10;192.168.1.1"></textarea>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin:14px 0">
+      <button class="btn btn-primary" onclick="doDedup()">去重</button>
+      <label class="check-row"><input type="checkbox" class="input" id="dupCase" checked> 忽略大小写</label>
+      <label class="check-row"><input type="checkbox" class="input" id="dupOrder" checked> 保持原顺序</label>
+    </div>
+    <div class="form-item"><label>去重结果（<span id="dupCount">0</span> 条）</label>
+      <textarea class="textarea" id="dupResult" rows="10" readonly style="background:#f8fafc"></textarea>
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="copyResult('dupResult')">复制结果</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+async function doDedup() {
+  const r = await ZhiShield.api("/api/tools/dedup", { json: {
+    text: document.getElementById("dupText").value,
+    case_insensitive: document.getElementById("dupCase").checked,
+    keep_order: document.getElementById("dupOrder").checked,
+  }});
+  if (r.code === 0) {
+    document.getElementById("dupResult").value = r.data;
+    document.getElementById("dupCount").textContent = r.count;
+  } else ZhiShield.error(r.msg);
+}
+async function copyResult(id) {
+  const t = document.getElementById(id).value;
+  if (!t) return;
+  try { await navigator.clipboard.writeText(t); ZhiShield.success("已复制"); }
+  catch (e) { ZhiShield.error("复制失败"); }
+}
+</script>
+{% endblock %}

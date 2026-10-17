@@ -1,0 +1,21 @@
+name: zhianjian
+
+services:
+  zhianjian:
+    build: .
+    image: zhianjian:latest
+    container_name: zhianjian
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - ZS_HOST=0.0.0.0
+      - ZS_PORT=8080
+      - ZS_NO_BROWSER=1
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data:/app/data
+      - ./config.json:/app/config.json
+    # 允许容器内通过 host.docker.internal 访问宿主机端口（Shelling API 位于宿主 8000）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

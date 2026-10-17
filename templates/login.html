@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · {{ APP_NAME }}</title>
+<link rel="stylesheet" href="/static/css/style.css?v=20260917a">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%232563eb'/><path d='M12 5l6 2.5v4c0 3.5-2.5 6-6 7.5-3.5-1.5-6-4-6-7.5v-4L12 5z' fill='white'/><path d='M9 12.5l2 2 4-4' stroke='%232563eb' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+:root { --primary: {{ THEME_COLOR }}; }
+body { background: #eef2f7; }
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.login-card {
+  width: 100%; max-width: 380px; background: #fff; border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 8px 30px rgba(15, 23, 42, .08); padding: 30px 30px 24px;
+}
+.login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.login-logo {
+  width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
+  background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: center;
+}
+.login-logo svg { width: 24px; height: 24px; }
+.login-name { font-size: 17px; font-weight: 800; line-height: 1.2; }
+.login-sub { font-size: 12px; color: var(--text-2); margin-top: 3px; }
+.login-title { font-size: 15px; font-weight: 700; margin-bottom: 16px; }
+.login-card .form-item { margin-bottom: 14px; }
+.pwd-wrap { position: relative; display: flex; }
+.pwd-wrap .input { padding-right: 42px; }
+.pwd-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 30px; height: 30px; border: none; background: transparent; color: var(--text-2);
+  border-radius: 7px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.pwd-toggle:hover { background: #f1f5f9; color: var(--text); }
+.pwd-toggle svg { width: 17px; height: 17px; }
+.login-err { min-height: 18px; font-size: 13px; color: var(--danger); margin: 2px 0 10px; }
+.login-foot { margin-top: 18px; text-align: center; font-size: 12px; color: #94a3b8; }
+</style>
+</head>
+<body>
+<main class="login-wrap">
+  <form class="login-card" id="loginForm">
+    <div class="login-brand">
+      <div class="login-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div>
+        <div class="login-name">{{ APP_NAME }}</div>
+        <div class="login-sub">{{ APP_TITLE }}</div>
+      </div>
+    </div>
+
+    <h1 class="login-title">登录</h1>
+
+    <div class="form-item">
+      <label for="username">用户名</label>
+      <input class="input" id="username" name="username" autocomplete="username" autofocus>
+    </div>
+    <div class="form-item">
+      <label for="password">密码</label>
+      <div class="pwd-wrap">
+        <input class="input" id="password" name="password" type="password" autocomplete="current-password">
+        <button type="button" class="pwd-toggle" id="pwdToggle" title="显示密码" aria-label="显示密码">
+          <svg id="pwdIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="login-err" id="loginErr"></div>
+    <button class="btn btn-primary btn-block" id="loginBtn" type="submit">登录</button>
+    <div class="login-foot">请使用管理员分配的账号登录</div>
+  </form>
+</main>
+
+<script src="/static/js/app.js?v=20260917a"></script>
+<script>
+const EYE = '<path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12z"/><circle cx="12" cy="12" r="3"/>';
+const EYE_OFF = '<path d="M2 2l20 20"/><path d="M6.7 6.8C3.6 8.6 1.5 12 1.5 12s3.5 6.5 10.5 6.5c2 0 3.7-.6 5.1-1.5"/><path d="M9.9 5.8A11 11 0 0112 5.5c7 0 10.5 6.5 10.5 6.5a17 17 0 01-3.2 3.8"/><path d="M9.9 9.9a3 3 0 004.2 4.2"/>';
+
+document.getElementById("pwdToggle").addEventListener("click", () => {
+  const box = document.getElementById("password");
+  const show = box.type === "password";
+  box.type = show ? "text" : "password";
+  const btn = document.getElementById("pwdToggle");
+  btn.title = show ? "隐藏密码" : "显示密码";
+  btn.setAttribute("aria-label", btn.title);
+  document.getElementById("pwdIcon").innerHTML = show ? EYE_OFF : EYE;
+  box.focus();
+});
+
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById("loginBtn");
+  const err = document.getElementById("loginErr");
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
+  err.textContent = "";
+  if (!username || !password) { err.textContent = "请输入用户名和密码"; return; }
+
+  btn.disabled = true;
+  btn.textContent = "登录中...";
+  try {
+    const r = await ZhiShield.api("/api/auth/login", { json: { username, password } });
+    if (r && r.code === 0) {
+      const next = new URLSearchParams(location.search).get("next");
+      location.href = (next && next.startsWith("/")) ? next : "/";
+      return;
+    }
+    err.textContent = (r && r.msg) || "登录失败";
+  } catch (ex) {
+    /* 区分「服务端报错」和「真的连不上」，别再让 500 背网络问题的锅 */
+    const st = ex && ex.status;
+    if (st >= 500) err.textContent = `服务器内部错误（${st}），请查看服务端日志`;
+    else if (st) err.textContent = `请求失败（${st}），请稍后重试`;
+    else err.textContent = "无法连接服务器，请检查网络后重试";
+  }
+  btn.disabled = false;
+  btn.textContent = "登录";
+  document.getElementById("password").select();
+});
+</script>
+</body>
+</html>

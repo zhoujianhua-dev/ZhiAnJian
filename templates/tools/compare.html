@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}A/B 文件对比{% endblock %}
+{% block page_title %}A/B 文件对比{% endblock %}
+{% block page_crumb %}工具 / 资产基线比对{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header"><h3>A/B 文件对比（资产基线比对）</h3></div>
+  <div class="card-body">
+    <div style="margin-bottom:14px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid var(--primary,#2563eb);border-radius:8px;font-size:13px;color:#475569;line-height:1.9">
+      <b>这是什么：</b>把两份“每行一个值”的名单（域名 / IP / URL / 资产名等）按行比对，自动算出：<br>
+      <span class="badge badge-critical">仅 A 有</span> 在 B 中消失（疑似已下线 / 被删除）·
+      <span class="badge badge-info">仅 B 有</span> 相比 A 新增 ·
+      <span class="badge badge-medium">共有</span> 两边都在。<br>
+      <b>典型用法：</b>本期资产清单 vs 上期基线，快速发现<b>新增资产</b>与<b>消失资产</b>；也可用于两份名单去重、查漏。支持直接粘贴，或点下方按钮导入 .txt/.csv（自动按行/逗号拆分）。
+    </div>
+    <div class="layout" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="form-item">
+        <label>文件 A（基线 / 旧清单）
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-left:8px" onclick="document.getElementById('fileA').click()">📂 导入文件</button>
+          <input type="file" id="fileA" accept=".txt,.csv,.log" style="display:none" onchange="loadFile('cmpA',this)">
+        </label>
+        <textarea class="textarea" id="cmpA" rows="10" placeholder="每行一个值，例如旧一期的域名清单"></textarea>
+      </div>
+      <div class="form-item">
+        <label>文件 B（当前 / 新清单）
+          <button type="button" class="btn btn-ghost btn-sm" style="margin-left:8px" onclick="document.getElementById('fileB').click()">📂 导入文件</button>
+          <input type="file" id="fileB" accept=".txt,.csv,.log" style="display:none" onchange="loadFile('cmpB',this)">
+        </label>
+        <textarea class="textarea" id="cmpB" rows="10" placeholder="每行一个值，例如本期最新的域名清单"></textarea>
+      </div>
+    </div>
+    <button class="btn btn-primary" style="margin:14px 0" onclick="doCompare()">开始对比</button>
+    <div id="cmpResult"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+function loadFile(targetId, input) {
+  const f = input.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    // 兼容换行与逗号/制表符分隔，自动拆成每行一个
+    const vals = e.target.result.split(/\r?\n|[,，\t]/).map(s => s.trim()).filter(Boolean);
+    document.getElementById(targetId).value = Array.from(new Set(vals)).join("\n");
+    ZhiShield.success(`已导入 ${f.name}，识别 ${vals.length} 行`);
+  };
+  reader.readAsText(f, "utf-8");
+  input.value = "";
+}
+async function doCompare() {
+  const r = await ZhiShield.api("/api/tools/compare", { json: {
+    a: document.getElementById("cmpA").value, b: document.getElementById("cmpB").value } });
+  const box = document.getElementById("cmpResult");
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  const d = r.data;
+  box.innerHTML = `
+  <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+    <span class="badge badge-blue">A 共 ${d.a_count} 条</span>
+    <span class="badge badge-green">B 共 ${d.b_count} 条</span>
+    <span class="badge badge-medium">相同 ${d.common_count} 条</span>
+    <span class="badge badge-critical">仅 A 有 ${d.only_a.split("\n").filter(Boolean).length} 条</span>
+    <span class="badge badge-info">仅 B 有 ${d.only_b.split("\n").filter(Boolean).length} 条</span>
+  </div>
+  <div class="layout" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div><div style="font-weight:700;font-size:13px;margin-bottom:8px">仅 A 存在</div>
+      <div class="code-block" style="max-height:260px;overflow:auto">${d.only_a ? d.only_a.split("\n").map(l => "<span style='color:#fca5a5'>- " + ZhiShield.esc(l) + "</span>").join("\n") : "（无）"}</div></div>
+    <div><div style="font-weight:700;font-size:13px;margin-bottom:8px">仅 B 存在</div>
+      <div class="code-block" style="max-height:260px;overflow:auto">${d.only_b ? d.only_b.split("\n").map(l => "<span style='color:#86efac'>+ " + ZhiShield.esc(l) + "</span>").join("\n") : "（无）"}</div></div>
+  </div>`;
+}
+</script>
+{% endblock %}

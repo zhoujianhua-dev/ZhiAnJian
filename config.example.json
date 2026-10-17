@@ -1,0 +1,16 @@
+{
+  "app_title": "智安鉴",
+  "app_subtitle": "智能安全检测与漏洞报告系统",
+  "theme_color": "#2563eb",
+  "background": "",
+  "background_overlay": 0.35,
+  "background_blur": 0,
+  "report_header": "网络安全测试报告",
+  "export_org": "",
+  "ai": {
+    "base_url": "https://api.stepfun.com/v1",
+    "model": "step-3.5-flash",
+    "api_key": "",
+    "timeout": 120
+  }
+}

@@ -1,0 +1,787 @@
+{% extends "base.html" %}
+{% block title %}AI 漏洞扫描{% endblock %}
+{% block page_title %}AI 漏洞扫描{% endblock %}
+{% block page_crumb %}业务管理 / 一键扫描 → 实时进度 → 结果回收{% endblock %}
+
+{% block content %}
+<div class="ai-zone" style="margin-bottom:18px">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span class="ai-badge">🛰 扫描引擎</span>
+    <span style="font-size:13px;color:#334155">
+      扫描引擎已内置在系统中、无需任何配置：发起扫描 → 实时查看子 Agent 进度 → 回收漏洞结果 → 一键带到「AI 智能生成报告」
+    </span>
+    <span style="flex:1"></span>
+    <span id="scEngineStatus" style="font-size:12.5px;color:#94a3b8">正在检测扫描引擎…</span>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+  <!-- ① 发起扫描 -->
+  <div class="card">
+    <div class="card-header"><h3>① 发起扫描</h3>
+      <span style="font-size:12px;color:#94a3b8">目标支持域名 / IP / URL</span></div>
+    <div class="card-body">
+      <div class="form-grid">
+        <div class="form-item full"><label>扫描目标</label>
+          <input class="input" id="scTarget" placeholder="10.0.5.145 或 https://example.com"
+                 onkeydown="if(event.key==='Enter')startScan()"></div>
+        <div class="form-item"><label>扫描类型</label>
+          <select class="select" id="scType"></select></div>
+        <div class="form-item"><label>备注（可选）</label>
+          <input class="input" id="scRemark" placeholder="智安鉴发起"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="scStartBtn" onclick="startScan()">开始扫描</button>
+        <button class="btn btn-ghost" id="scCancelBtn" style="display:none" onclick="cancelScan()">取消扫描</button>
+      </div>
+      <div style="margin-top:10px;font-size:12.5px;color:#64748b;line-height:1.9">
+        扫描由扫描引擎的多子 Agent 编排执行（资产探测 → 漏洞验证 → AI 校验 → 汇总），
+        结果会自动转换为智安鉴统一的漏洞数据结构，可直接进入报告生成流程。
+        <br>提示：请仅对已获得授权的目标发起扫描。
+      </div>
+    </div>
+  </div>
+
+  <!-- ② 扫描进度 -->
+  <div class="card">
+    <div class="card-header"><h3>② 扫描进度</h3>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:12px;color:#94a3b8" id="scPhase"></span>
+        <button class="btn btn-ghost btn-sm" id="scLogsBtn" style="display:none"
+                onclick="openScanLogs(scLastScanId)">查看过程</button>
+      </div></div>
+    <div class="card-body" id="scProgress">
+      <div class="empty-state" style="padding:26px 10px">
+        <div class="empty-title">尚未发起扫描</div>
+        <div class="empty-desc">填写左侧目标后点「开始扫描」，这里会显示实时进度</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ③ 扫描结果 -->
+<div class="card" id="scResultCard" style="display:none;margin-top:18px">
+  <div class="card-header"><h3>③ 扫描结果</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="sendToReportAi()">✨ 带到 AI 生成报告</button>
+      <button class="btn btn-ghost btn-sm" onclick="openAttackPath(scLastScanId)">🔗 攻击链</button>
+      <button class="btn btn-ghost btn-sm" onclick="copyResult()">复制 JSON</button>
+      <button class="btn btn-ghost btn-sm" onclick="downloadResult()">导出 JSON</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div id="scResultSummary" style="font-size:13px;line-height:1.9"></div>
+    <div class="table-wrap" style="margin-top:12px" id="scResultTable"></div>
+  </div>
+</div>
+
+<!-- 最近扫描 -->
+<div class="card" style="margin-top:18px">
+  <div class="card-header"><h3>最近扫描</h3>
+    <button class="btn btn-ghost btn-sm" onclick="loadRecentScans(scPage)">刷新</button></div>
+  <div class="card-body flush">
+    <div class="table-wrap" id="scRecentTable"></div>
+    <div id="scRecentPager" style="padding:10px 14px"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+let scTimer = null, scBusy = false, scPage = 1;
+const scPageSize = 10;
+let scLastResult = null, scLastScanId = "";
+let scLastTarget = "";
+/* 扫描目标缓存：scan_id → target（供「扫描过程 / 攻击链」弹窗显示标题） */
+const scScanTargets = {};
+
+/* 扫描类型下拉：来自扫描引擎（/api/scanner/shelling/options） */
+async function loadScanOptions() {
+  try {
+    const r = await ZhiShield.api("/api/scanner/shelling/options");
+    const sel = document.getElementById("scType");
+    if (r && r.code === 0 && r.data && r.data.scan_types) {
+      sel.innerHTML = r.data.scan_types.map(t =>
+        `<option value="${ZhiShield.esc(t.value)}">${ZhiShield.esc(t.label)}</option>`).join("");
+    }
+  } catch (e) { /* 保持空下拉，提交时后端会回落到默认类型 */ }
+}
+
+function setEngineStatus(html) { document.getElementById("scEngineStatus").innerHTML = html; }
+
+/* ==================== 发起扫描 ==================== */
+async function startScan() {
+  const target = (document.getElementById("scTarget").value || "").trim();
+  if (!target) { ZhiShield.error("请填写扫描目标（域名 / IP / URL）"); return; }
+  const btn = document.getElementById("scStartBtn");
+  const box = document.getElementById("scProgress");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px"></span> 提交中...';
+  document.getElementById("scPhase").textContent = "";
+  box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:var(--primary);font-size:13px"><span class="spinner" style="width:15px;height:15px"></span>正在提交扫描任务...</div>';
+  try {
+    const r = await ZhiShield.api("/api/scanner/shelling/start", { json: {
+      target: target,
+      scan_type: document.getElementById("scType").value || "full",
+      remark: (document.getElementById("scRemark").value || "").trim() || "智安鉴发起",
+    }});
+    if (!r || r.code !== 0) {
+      box.innerHTML = `<div style="color:#ef4444;font-size:13px">提交失败：${ZhiShield.esc((r && r.msg) || "未知错误")}</div>`;
+      btn.disabled = false; btn.innerHTML = "开始扫描";
+      return;
+    }
+    scLastScanId = r.data.scan_id;
+    scScanTargets[scLastScanId] = r.data.target || target;
+    scLastTarget = r.data.target || target;
+    btn.innerHTML = "扫描进行中...";
+    document.getElementById("scCancelBtn").style.display = "";
+    document.getElementById("scLogsBtn").style.display = "";
+    document.getElementById("scTarget").disabled = true;
+    document.getElementById("scType").disabled = true;
+    pollScan(r.data.scan_id);
+  } catch (e) {
+    box.innerHTML = `<div style="color:#ef4444;font-size:13px">提交失败：${ZhiShield.esc(e.message)}</div>`;
+    btn.disabled = false; btn.innerHTML = "开始扫描";
+  }
+}
+
+function resetScanForm(text) {
+  if (scTimer) { clearInterval(scTimer); scTimer = null; }
+  const btn = document.getElementById("scStartBtn");
+  if (btn) { btn.disabled = false; btn.innerHTML = text || "开始扫描"; }
+  document.getElementById("scCancelBtn").style.display = "none";
+  document.getElementById("scTarget").disabled = false;
+  document.getElementById("scType").disabled = false;
+}
+
+function pollScan(scanId) {
+  if (scTimer) clearInterval(scTimer);
+  const tick = async () => {
+    if (scBusy) return;
+    scBusy = true;
+    try {
+      const r = await ZhiShield.api("/api/scanner/shelling/status/" + encodeURIComponent(scanId));
+      if (!r || r.code !== 0) { renderProgress({ error: (r && r.msg) || "查询进度失败" }); return; }
+      renderProgress(r.data);
+      if (r.data.finished) {
+        if (scTimer) { clearInterval(scTimer); scTimer = null; }
+        await finishScan(scanId, r.data);
+      }
+    } catch (e) {
+      renderProgress({ error: e.message });
+    } finally {
+      scBusy = false;
+    }
+  };
+  scTimer = setInterval(tick, 2500);
+  tick();
+}
+
+function renderProgress(d) {
+  const box = document.getElementById("scProgress");
+  const phase = document.getElementById("scPhase");
+  if (!box) return;
+  if (d.error) {
+    box.innerHTML = `<div style="color:#ef4444;font-size:13px">进度查询失败：${ZhiShield.esc(d.error)}</div>`;
+    return;
+  }
+  if (phase) phase.textContent = d.phase ? "阶段：" + d.phase : "";
+  const agents = (d.sub_agents || []).map(s => {
+    const pct = Math.max(0, Math.min(100, Number(s.progress) || 0));
+    return `<div style="margin-top:8px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:#475569">
+          <span><b>${ZhiShield.esc(s.name)}</b> <span style="color:#94a3b8">${ZhiShield.esc(s.role)}</span></span>
+          <span style="white-space:nowrap">${ZhiShield.esc(s.status)}${s.findings_count ? " · 发现 " + s.findings_count : ""}</span>
+        </div>
+        <div style="height:6px;border-radius:3px;background:#e2e8f0;overflow:hidden;margin-top:3px">
+          <div style="height:100%;width:${pct}%;background:var(--primary);transition:width .4s"></div>
+        </div>
+      </div>`;
+  }).join("");
+  box.innerHTML = `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;font-size:13px">
+      <div style="display:flex;justify-content:space-between;gap:10px">
+        <b>${ZhiShield.esc(d.status_cn || d.status || "")}</b>
+        <span style="color:#64748b;font-size:12px">${ZhiShield.esc(d.scan_id || "")}</span>
+      </div>
+      <div style="color:#475569;font-size:12px;margin-top:2px">${ZhiShield.esc(d.message || "")}</div>
+      ${agents}
+    </div>`;
+}
+
+async function finishScan(scanId, progress) {
+  const box = document.getElementById("scProgress");
+  if (progress && !progress.ok) {
+    resetScanForm("重新扫描");
+    ZhiShield.error("扫描未成功完成：" + (progress.status_cn || progress.status || ""));
+    return;
+  }
+  if (box) box.innerHTML += '<div style="margin-top:8px;font-size:13px;color:var(--primary)">扫描完成，正在获取漏洞结果...</div>';
+  await fetchResult(scanId);
+  resetScanForm("再次扫描");
+  loadRecentScans(1);
+}
+
+async function fetchResult(scanId) {
+  try {
+    const r = await ZhiShield.api("/api/scanner/shelling/result/" + encodeURIComponent(scanId));
+    if (!r || r.code !== 0) { ZhiShield.error("获取结果失败：" + ((r && r.msg) || "")); return; }
+    renderResult(r.data);
+    ZhiShield.success(`扫描完成，获取 ${r.data.count} 条漏洞数据`);
+  } catch (e) {
+    ZhiShield.error("获取结果失败：" + e.message);
+  }
+}
+
+async function cancelScan() {
+  if (!scLastScanId) return;
+  ZhiShield.confirmDialog("确定取消正在进行的扫描？", async () => {
+    try {
+      const r = await ZhiShield.api("/api/scanner/shelling/cancel/" + encodeURIComponent(scLastScanId), { json: {} });
+      if (r && r.code === 0) ZhiShield.info("已请求取消扫描"); else ZhiShield.error((r && r.msg) || "取消失败");
+    } catch (e) { ZhiShield.error("取消失败：" + e.message); }
+  }, "取消扫描", true);
+}
+/* ==================== 结果渲染（卡片与弹窗共用） ==================== */
+/* 记下这次结果，供「复制 / 导出 / 带到 AI 生成报告」使用 */
+function scAdoptResult(d) {
+  scLastResult = d;
+  scLastScanId = d.scan_id || scLastScanId;
+  if (d.scan_id) scScanTargets[d.scan_id] = d.target || scScanTargets[d.scan_id] || "";
+  scLastTarget = d.target || scLastTarget;
+  const logsBtn = document.getElementById("scLogsBtn");
+  if (logsBtn) logsBtn.style.display = "";
+}
+
+function scResultSummaryHtml(d) {
+  const stats = Object.entries(d.severity_stats_cn || {}).map(([k, n]) =>
+    `<span class="badge badge-blue" style="margin-right:6px">${ZhiShield.esc(k)} × ${n}</span>`).join("");
+  const risk = (d.llm_risk_score === null || d.llm_risk_score === undefined) ? "" :
+    `<span class="badge badge-gray" style="margin-left:6px">风险评分 ${ZhiShield.esc(String(d.llm_risk_score))}</span>`;
+  return `<div>目标 <b>${ZhiShield.esc(d.target || "-")}</b>
+       · ${ZhiShield.esc(d.scan_type_cn || "")}
+       · <span style="color:#64748b">${ZhiShield.esc(d.status_cn || d.status || "")}</span>
+       · 共 <b>${d.count}</b> 条发现 ${stats}${risk}</div>` +
+    (d.llm_summary ? `<div style="color:#5b21b6;font-size:12.5px;margin-top:4px">AI 摘要：${ZhiShield.esc(d.llm_summary)}</div>` : "");
+}
+
+function scResultTableHtml(d) {
+  const rows = (d.findings || []).map(f => {
+    const x = (f && f.data) || {};
+    return `<tr>
+        <td>${ZhiShield.sevBadge(x.severity)}</td>
+        <td style="font-weight:600">${ZhiShield.esc(x.title)}</td>
+        <td style="font-size:12px;color:#475569;word-break:break-all">${ZhiShield.esc(x.url)}</td>
+        <td style="font-size:12px;color:#64748b;max-width:420px">${ZhiShield.esc(String(x.evidence || "").replace(/\n/g, " / "))}</td>
+      </tr>`;
+  }).join("");
+  return `<table class="data-table"><thead><tr>
+       <th style="width:72px">等级</th><th style="width:26%">漏洞名称</th>
+       <th style="width:22%">位置</th><th>证据 / 说明</th></tr></thead>
+     <tbody>${rows || '<tr class="empty-row"><td colspan="4">本次扫描没有发现漏洞</td></tr>'}</tbody></table>`;
+}
+
+/* 底部「③ 扫描结果」卡片（页面内发起扫描后回填） */
+function renderResult(d) {
+  scAdoptResult(d);
+  const card = document.getElementById("scResultCard");
+  if (card) card.style.display = "";
+  document.getElementById("scResultSummary").innerHTML = scResultSummaryHtml(d);
+  document.getElementById("scResultTable").innerHTML = scResultTableHtml(d);
+}
+
+/* 结果带到「AI 智能生成报告」页（经 sessionStorage 传递） */
+function sendToReportAi() {
+  if (!scLastResult) { ZhiShield.error("还没有可用的扫描结果"); return; }
+  try {
+    sessionStorage.setItem("zhianjian_scan_handoff", JSON.stringify({
+      scan_id: scLastResult.scan_id || "",
+      target: scLastResult.target || "",
+      findings: scLastResult.findings || [],
+      severity_stats_cn: scLastResult.severity_stats_cn || {},
+      llm_summary: scLastResult.llm_summary || "",
+      ts: Date.now(),
+    }));
+  } catch (e) { ZhiShield.error("无法暂存扫描结果：" + e.message); return; }
+  ZhiShield.success("已带入 AI 智能生成页，正在跳转...");
+  setTimeout(() => { location.href = "/reports/ai"; }, 400);
+}
+
+function copyResult() {
+  if (!scLastResult) { ZhiShield.error("还没有可用的扫描结果"); return; }
+  const text = JSON.stringify(scLastResult.findings, null, 2);
+  const fallback = () => {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); ZhiShield.success("已复制到剪贴板"); }
+    catch (e) { ZhiShield.error("复制失败，请手动选择文本"); }
+    document.body.removeChild(ta);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => ZhiShield.success(`已复制 ${scLastResult.findings.length} 条漏洞数据`))
+      .catch(fallback);
+  } else fallback();
+}
+
+function downloadResult() {
+  if (!scLastResult) { ZhiShield.error("还没有可用的扫描结果"); return; }
+  const safe = String(scLastResult.target || "target").replace(/[^\w.\-]/g, "_");
+  const name = "scan_" + safe + "_" + String(scLastResult.scan_id || "").slice(0, 8) + ".json";
+  const blob = new Blob([JSON.stringify(scLastResult.findings, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+
+/* ==================== 扫描过程（过程日志） ==================== */
+let scLogId = "", scLogNext = 0, scLogTimer = null, scLogBusy = false;
+let scLogIdle = 0, scLogFollow = true, scLogTotal = 0, scLogStopped = false;
+
+const SC_LOG_STYLE = {
+  info:    { bg: "#f0f9ff", bd: "#bae6fd", fg: "#0369a1" },
+  tool:    { bg: "#f5f3ff", bd: "#ddd6fe", fg: "#6d28d9" },
+  output:  { bg: "#f8fafc", bd: "#e2e8f0", fg: "#475569" },
+  llm:     { bg: "#fffbeb", bd: "#fde68a", fg: "#b45309" },
+  error:   { bg: "#fef2f2", bd: "#fecaca", fg: "#b91c1c" },
+  success: { bg: "#f0fdf4", bd: "#bbf7d0", fg: "#15803d" },
+};
+
+/* 目标标题：优先用缓存到的 target，其次退回 scan_id */
+function scTitleOf(scanId) {
+  return scScanTargets[scanId] || (scanId === scLastScanId ? scLastTarget : "") || scanId;
+}
+
+/* 日志时间戳（引擎给的是 UTC ISO，按北京时间展示） */
+function scLogTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (!isNaN(d.getTime())) {
+    const p = (n) => String(n).padStart(2, "0");
+    const bj = new Date(d.getTime() + 8 * 3600 * 1000);
+    return p(bj.getUTCHours()) + ":" + p(bj.getUTCMinutes()) + ":" + p(bj.getUTCSeconds());
+  }
+  return String(ts).slice(11, 19);
+}
+
+function scLogEntryHtml(e) {
+  const st = SC_LOG_STYLE[e.type] || SC_LOG_STYLE.info;
+  const tags =
+    (e.agent ? `<span class="badge badge-gray" style="font-size:10.5px">${ZhiShield.esc(e.agent)}</span>` : "") +
+    (e.tool ? `<span class="badge badge-blue" style="font-size:10.5px">🔧 ${ZhiShield.esc(e.tool)}</span>` : "");
+  return `<div style="display:flex;gap:9px;padding:7px 11px;border-radius:8px;margin-bottom:6px;background:${st.bg};border:1px solid ${st.bd}">
+      <div style="font-size:11px;color:#94a3b8;white-space:nowrap;padding-top:1px">${ZhiShield.esc(scLogTime(e.timestamp))}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:11px;font-weight:700;color:${st.fg}">${ZhiShield.esc(e.type_cn || e.type)}</span>
+          ${tags}
+        </div>
+        <div style="font-size:12.5px;color:#1e293b;margin-top:2px;word-break:break-word">${ZhiShield.esc(e.message)}</div>
+        ${e.details ? `<div style="font-size:11.5px;color:#64748b;margin-top:2px;white-space:pre-wrap;word-break:break-word">${ZhiShield.esc(e.details)}</div>` : ""}
+      </div>
+    </div>`;
+}
+
+function scSetLogStatus(html) {
+  const el = document.getElementById("scLogStatus");
+  if (el) el.innerHTML = html;
+}
+
+function scStopLogPolling(msg) {
+  scLogStopped = true;
+  if (scLogTimer) { clearInterval(scLogTimer); scLogTimer = null; }
+  if (msg) scSetLogStatus(msg);
+}
+
+async function openScanLogs(scanId) {
+  if (!scanId) { ZhiShield.error("请先选择一次扫描任务"); return; }
+  scLogId = scanId; scLogNext = 0; scLogIdle = 0; scLogTotal = 0;
+  scLogFollow = true; scLogStopped = false;
+  if (scLogTimer) { clearInterval(scLogTimer); scLogTimer = null; }
+  ZhiShield.openModal({
+    title: "扫描过程 · " + ZhiShield.esc(scTitleOf(scanId)),
+    size: "xl",
+    body: `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:12.5px;color:#64748b">扫描引擎各 Agent 的执行日志，扫描进行中会实时刷新</span>
+        <span style="font-size:12px;color:#94a3b8" id="scLogCount">共 0 条</span>
+      </div>
+      <div id="scLogBox" style="max-height:58vh;overflow:auto;padding-right:2px"></div>`,
+    footer: `<span id="scLogStatus" style="font-size:12px;color:#94a3b8;margin-right:auto"></span>
+             <button class="btn btn-ghost" id="scLogFollowBtn">暂停跟随</button>
+             <button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`,
+  });
+  const fb = document.getElementById("scLogFollowBtn");
+  if (fb) fb.addEventListener("click", () => {
+    scLogFollow = !scLogFollow;
+    fb.textContent = scLogFollow ? "暂停跟随" : "继续跟随";
+  });
+  scSetLogStatus('<span class="spinner" style="width:12px;height:12px;display:inline-block;vertical-align:-2px"></span> 正在读取…');
+  await scPollLogs();
+  if (!scLogStopped) scLogTimer = setInterval(scPollLogs, 2000);
+}
+
+async function scPollLogs() {
+  if (scLogStopped) return;
+  if (!document.getElementById("scLogBox")) { scStopLogPolling(); return; }
+  if (scLogBusy) return;
+  scLogBusy = true;
+  try {
+    const r = await ZhiShield.api("/api/scanner/shelling/logs/" + encodeURIComponent(scLogId) + "?since_index=" + scLogNext);
+    if (!r || r.code !== 0) {
+      scStopLogPolling(`<span style="color:#ef4444">读取日志失败：${ZhiShield.esc((r && r.msg) || "未知错误")}</span>`);
+      return;
+    }
+    const logs = (r.data && r.data.logs) || [];
+    if (r.data && r.data.next_index !== undefined) scLogNext = r.data.next_index;
+    const box = document.getElementById("scLogBox");
+    if (logs.length) {
+      if (box) {
+        if (scLogTotal === 0) box.innerHTML = "";
+        box.insertAdjacentHTML("beforeend", logs.map(scLogEntryHtml).join(""));
+        if (scLogFollow) box.scrollTop = box.scrollHeight;
+      }
+      scLogTotal += logs.length;
+      scLogIdle = 0;
+      const c = document.getElementById("scLogCount");
+      if (c) c.textContent = "共 " + scLogTotal + " 条";
+    } else {
+      scLogIdle++;
+    }
+    /* 连续两次没有新日志：复核任务状态，已结束就停止轮询 */
+    if (scLogIdle >= 2) {
+      let finished = false;
+      try {
+        const st = await ZhiShield.api("/api/scanner/shelling/status/" + encodeURIComponent(scLogId));
+        finished = !!(st && st.code === 0 && st.data && st.data.finished);
+      } catch (e) { /* 状态查询失败则继续轮询 */ }
+      if (finished) {
+        scStopLogPolling(`扫描已结束，共 ${scLogTotal} 条日志`);
+        if (scLogTotal === 0 && box) {
+          box.innerHTML = '<div class="empty-state" style="padding:30px 10px">' +
+            '<div class="empty-title">暂无过程日志</div>' +
+            '<div class="empty-desc">该扫描任务没有产生过程日志</div></div>';
+        }
+        return;
+      }
+      scLogIdle = 0;
+    }
+  } catch (e) {
+    scStopLogPolling(`<span style="color:#ef4444">读取日志失败：${ZhiShield.esc(e.message)}</span>`);
+  } finally {
+    scLogBusy = false;
+  }
+}
+
+/* ==================== 攻击链分析 ==================== */
+function scLevelBadge(cn, raw) {
+  const map = { critical: "badge-critical", high: "badge-high", medium: "badge-medium", low: "badge-low" };
+  return `<span class="badge ${map[raw] || "badge-gray"}">${ZhiShield.esc(cn || raw || "-")}</span>`;
+}
+
+function openAttackPath(scanId, refresh) {
+  if (!scanId) { ZhiShield.error("请先选择一次扫描任务"); return; }
+  ZhiShield.openModal({
+    title: "攻击链分析 · " + ZhiShield.esc(scTitleOf(scanId)),
+    size: "xl",
+    body: '<div id="scApBox"></div>',
+    footer: `<span id="scApStatus" style="font-size:12px;color:#94a3b8;margin-right:auto"></span>
+             <button class="btn btn-ghost" id="scApRefreshBtn">重新分析</button>
+             <button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`,
+  });
+  const btn = document.getElementById("scApRefreshBtn");
+  if (btn) btn.addEventListener("click", () => loadAttackPath(scanId, true));
+  loadAttackPath(scanId, !!refresh);
+}
+
+async function loadAttackPath(scanId, refresh) {
+  const box = document.getElementById("scApBox");
+  const btn = document.getElementById("scApRefreshBtn");
+  const status = document.getElementById("scApStatus");
+  if (!box) return;
+  if (btn) { btn.disabled = true; btn.innerHTML = refresh ? '<span class="spinner" style="width:13px;height:13px"></span> 分析中…' : "重新分析"; }
+  if (status) status.textContent = refresh ? "AI 正在重新分析，请稍候…" : "";
+  box.innerHTML = `<div style="display:flex;align-items:center;gap:9px;color:var(--primary);font-size:13px;padding:22px 0">
+      <span class="spinner" style="width:15px;height:15px"></span>
+      ${refresh ? "正在调用 AI 重新分析攻击链（约需 10~30 秒）…" : "正在读取攻击链分析…"}</div>`;
+  let r;
+  try {
+    r = await ZhiShield.api("/api/scanner/shelling/attack-path/" + encodeURIComponent(scanId) + (refresh ? "?refresh=true" : ""));
+  } catch (e) {
+    box.innerHTML = `<div style="color:#ef4444;font-size:13px;padding:14px 0">读取失败：${ZhiShield.esc(e.message)}</div>`;
+    if (btn) { btn.disabled = false; btn.innerHTML = "重新分析"; }
+    return;
+  }
+  if (btn) { btn.disabled = false; btn.innerHTML = "重新分析"; }
+  if (!r || r.code !== 0) {
+    box.innerHTML = `<div style="color:#ef4444;font-size:13px;padding:14px 0">读取失败：${ZhiShield.esc((r && r.msg) || "未知错误")}</div>`;
+    return;
+  }
+  if (status) status.textContent = r.data.cached ? "结果来自缓存（点「重新分析」可强制刷新）" : "";
+  box.innerHTML = scRenderAttackPath(r.data);
+}
+
+function scRenderAttackPath(d) {
+  const risk = d.risk_assessment || {};
+  const chains = d.attack_chains || [];
+  const phases = d.phases || [];
+  const parts = [];
+
+  /* 1) 整体风险评估 */
+  const score = (risk.risk_score === null || risk.risk_score === undefined) ? "-" : risk.risk_score;
+  parts.push(`<div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:#334155">整体风险</span>
+        ${scLevelBadge(risk.overall_risk_cn, risk.overall_risk)}
+        <span class="badge badge-gray">风险评分 ${ZhiShield.esc(String(score))} / 100</span>
+      </div>
+      ${risk.summary ? `<div style="font-size:12.5px;color:#475569;line-height:1.8;margin-top:8px">${ZhiShield.esc(risk.summary)}</div>` : ""}
+      ${(risk.critical_paths && risk.critical_paths.length) ? `
+        <div style="font-size:12.5px;color:#334155;margin-top:10px"><b>关键路径</b></div>
+        <ul style="margin:4px 0 0;padding-left:20px;font-size:12.5px;color:#475569;line-height:1.9">
+          ${risk.critical_paths.map(x => `<li>${ZhiShield.esc(x)}</li>`).join("")}
+        </ul>` : ""}
+      ${(risk.recommendations && risk.recommendations.length) ? `
+        <div style="font-size:12.5px;color:#334155;margin-top:10px"><b>处置建议</b></div>
+        <ul style="margin:4px 0 0;padding-left:20px;font-size:12.5px;color:#475569;line-height:1.9">
+          ${risk.recommendations.map(x => `<li>${ZhiShield.esc(x)}</li>`).join("")}
+        </ul>` : ""}
+    </div>`);
+
+  /* 2) 攻击链 */
+  if (!chains.length) {
+    parts.push(`<div class="alert-warn" style="align-items:flex-start">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3L2 21h20L12 3z"/><path d="M12 10v4M12 17h.01"/></svg>
+        <div class="alert-warn-text">
+          <b>本次未生成可用的攻击链</b>
+          <div style="margin-top:3px;line-height:1.8">
+            攻击链需要扫描引擎的 AI 输出完整结构。出现这种情况通常是因为：目标未发现可串联的有效漏洞
+            （多为信息类或未验证风险），或 AI 分析输出不完整被判定为不可靠。
+            可点右下角「重新分析」重试；若仍为空，说明该目标当前缺少可构建攻击链的有效漏洞。
+          </div>
+        </div>
+      </div>`);
+  } else {
+    parts.push(`<div style="font-size:13px;font-weight:700;color:#334155;margin-bottom:8px">攻击链（${chains.length}）</div>`);
+    chains.forEach((c, idx) => {
+      const steps = (c.steps || []).map(s => `
+        <div style="display:flex;gap:10px;padding:8px 0;border-top:1px dashed #f1f5f9">
+          <div style="width:22px;height:22px;flex-shrink:0;border-radius:50%;background:#eff6ff;color:#1d4ed8;
+               font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center">${ZhiShield.esc(String(s.order || 0))}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12.5px;color:#1e293b;line-height:1.7">${ZhiShield.esc(s.action)}</div>
+            ${s.vulnerability ? `<div style="font-size:11.5px;color:#7c3aed;margin-top:2px">关联漏洞：${ZhiShield.esc(s.vulnerability)}</div>` : ""}
+            ${s.result ? `<div style="font-size:11.5px;color:#64748b;margin-top:2px">预期结果：${ZhiShield.esc(s.result)}</div>` : ""}
+          </div>
+        </div>`).join("");
+      parts.push(`<div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-size:13px;font-weight:700;color:#334155">${idx + 1}. ${ZhiShield.esc(c.name)}</span>
+            <span class="badge badge-gray">可能性 ${ZhiShield.esc(c.likelihood_cn || "-")}</span>
+            ${scLevelBadge("影响 " + (c.impact_cn || "-"), c.impact)}
+          </div>
+          ${c.description ? `<div style="font-size:12.5px;color:#64748b;line-height:1.8;margin-top:6px">${ZhiShield.esc(c.description)}</div>` : ""}
+          <div style="margin-top:8px">${steps}</div>
+        </div>`);
+    });
+  }
+
+  /* 3) 阶段分析 */
+  if (phases.length) {
+    parts.push('<div style="font-size:13px;font-weight:700;color:#334155;margin:16px 0 8px">阶段分析</div>');
+    phases.forEach(p => {
+      const items = (p.items || []).map(i => `
+        <div style="display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-top:1px dashed #f1f5f9">
+          ${ZhiShield.sevBadge(i.severity)}
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12.5px;color:#1e293b;font-weight:600">${ZhiShield.esc(i.name)}</div>
+            ${i.details ? `<div style="font-size:11.5px;color:#64748b;margin-top:2px;line-height:1.7">${ZhiShield.esc(i.details)}</div>` : ""}
+          </div>
+        </div>`).join("");
+      parts.push(`<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:12.5px;font-weight:700;color:#334155">${ZhiShield.esc(p.name)}</span>
+            <span class="badge badge-gray">${(p.items || []).length} 项</span>
+          </div>
+          ${p.description ? `<div style="font-size:12px;color:#64748b;line-height:1.8;margin-top:4px">${ZhiShield.esc(p.description)}</div>` : ""}
+          <div style="margin-top:4px">${items || '<div style="font-size:12px;color:#94a3b8;padding:6px 0">该阶段无内容</div>'}</div>
+        </div>`);
+    });
+  }
+
+  return parts.join("");
+}
+
+/* ==================== 最近扫描 ==================== */
+async function loadRecentScans(page) {
+  scPage = page || 1;
+  const el = document.getElementById("scRecentTable");
+  const pager = document.getElementById("scRecentPager");
+  ZhiShield.showLoading(el, "正在读取最近扫描...");
+  let r;
+  try {
+    r = await ZhiShield.api("/api/scanner/shelling/scans?page=" + scPage + "&page_size=" + scPageSize);
+  } catch (e) {
+    el.innerHTML = `<div style="padding:30px;text-align:center;color:#ef4444;font-size:13px">读取失败：${ZhiShield.esc(e.message)}</div>`;
+    setEngineStatus('<span style="color:#ef4444">⚠ 扫描引擎不可达</span>');
+    pager.innerHTML = "";
+    return;
+  }
+  if (!r || r.code !== 0) {
+    el.innerHTML = `<div style="padding:26px 14px;text-align:center;color:#ef4444;font-size:13px">${ZhiShield.esc((r && r.msg) || "读取失败")}</div>`;
+    setEngineStatus('<span style="color:#ef4444">⚠ 扫描引擎不可达</span>');
+    pager.innerHTML = "";
+    return;
+  }
+  setEngineStatus('<span style="color:#16a34a">✔ 扫描引擎已连接</span>');
+  const items = (r.data && r.data.items) || [];
+  /* 删除后当前页可能已空，自动回退上一页 */
+  if (!items.length && scPage > 1) { loadRecentScans(scPage - 1); return; }
+  const rows = items.map(it => {
+    scScanTargets[it.scan_id] = it.target || "";
+    const badge = it.status === "COMPLETED" ? "badge-green"
+      : (it.status === "FAILED" ? "badge-critical"
+      : (it.status === "RUNNING" || it.status === "PENDING" ? "badge-blue" : "badge-gray"));
+    const risk = (it.llm_risk_score === null || it.llm_risk_score === undefined) ? "-" : it.llm_risk_score;
+    return `<tr>
+        <td style="font-size:12px;color:#64748b;white-space:nowrap">${ZhiShield.fmtTimeUtc8(it.created_at)}</td>
+        <td style="font-weight:600;word-break:break-all">${ZhiShield.esc(it.target)}</td>
+        <td>${ZhiShield.esc(it.scan_type_cn)}</td>
+        <td><span class="badge ${badge}">${ZhiShield.esc(it.status_cn)}</span></td>
+        <td>${it.vulnerability_count}</td>
+        <td>${risk}</td>
+        <td class="sc-remark" data-scan-id="${ZhiShield.esc(it.scan_id)}" data-remark="${ZhiShield.esc(it.remark)}"
+            style="font-size:12px;color:#64748b;cursor:text" title="双击编辑备注">${ZhiShield.esc(it.remark) || '<span style="color:#cbd5e1">—</span>'}</td>
+        <td style="white-space:nowrap">
+          <a class="link-btn" onclick="openScanResult('${ZhiShield.esc(it.scan_id)}')">查看结果</a>
+          <span style="color:#cbd5e1"> · </span>
+          <a class="link-btn" onclick="openScanLogs('${ZhiShield.esc(it.scan_id)}')">扫描过程</a>
+          <span style="color:#cbd5e1"> · </span>
+          <a class="link-btn" onclick="openAttackPath('${ZhiShield.esc(it.scan_id)}')">攻击链</a>
+          <span style="color:#cbd5e1"> · </span>
+          <a class="link-btn danger" onclick="deleteScan('${ZhiShield.esc(it.scan_id)}','${ZhiShield.esc(it.status)}')">删除</a>
+        </td>
+      </tr>`;
+  }).join("");
+  el.innerHTML = `<table class="data-table"><thead><tr>
+      <th>发起时间</th><th>目标</th><th>类型</th><th>状态</th><th>漏洞数</th><th>风险评分</th><th>备注</th><th>操作</th>
+    </tr></thead><tbody>${rows || '<tr class="empty-row"><td colspan="8">暂无扫描记录</td></tr>'}</tbody></table>`;
+  ZhiShield.renderPagination(pager, scPage, (r.data && r.data.total) || 0, scPageSize, (p) => loadRecentScans(p));
+}
+
+function scSetResBox(html) {
+  const box = document.getElementById("scResBox");
+  if (box) box.innerHTML = html;
+}
+
+async function openScanResult(scanId) {
+  if (!scanId) { ZhiShield.error("请先选择一次扫描任务"); return; }
+  ZhiShield.openModal({
+    title: "扫描结果 · " + ZhiShield.esc(scTitleOf(scanId)),
+    size: "xl",
+    body: `<div id="scResBox"><div style="display:flex;align-items:center;gap:9px;color:var(--primary);font-size:13px;padding:22px 0">
+        <span class="spinner" style="width:15px;height:15px"></span>正在读取该次扫描的结果…</div></div>`,
+    footer: `<button class="btn btn-ghost" onclick="copyResult()">复制 JSON</button>
+             <button class="btn btn-ghost" onclick="downloadResult()">导出 JSON</button>
+             <button class="btn btn-primary" onclick="sendToReportAi()">✨ 带到 AI 生成报告</button>
+             <button class="btn btn-ghost" onclick="ZhiShield.closeModal()">关闭</button>`,
+  });
+  let r;
+  try {
+    r = await ZhiShield.api("/api/scanner/shelling/result/" + encodeURIComponent(scanId));
+  } catch (e) {
+    scSetResBox(`<div style="color:#ef4444;font-size:13px;padding:14px 0">读取失败：${ZhiShield.esc(e.message)}</div>`);
+    return;
+  }
+  if (!r || r.code !== 0) {
+    scSetResBox(`<div style="color:#ef4444;font-size:13px;padding:14px 0">读取失败：${ZhiShield.esc((r && r.msg) || "未知错误")}</div>`);
+    return;
+  }
+  scAdoptResult(r.data);
+  scSetResBox(`<div style="font-size:13px;line-height:1.9">${scResultSummaryHtml(r.data)}</div>
+      <div class="table-wrap" style="margin-top:12px">${scResultTableHtml(r.data)}</div>`);
+}
+
+/* 删除某次扫描（进行中的任务由后端先取消再删除） */
+async function deleteScan(scanId, status) {
+  if (!scanId) return;
+  const target = scScanTargets[scanId] || "";
+  const running = status === "RUNNING" || status === "PENDING";
+  const tip = running
+    ? "该扫描仍在进行中，删除前会先取消它。"
+    : "该任务的扫描结果与过程记录会一并删除。";
+  ZhiShield.confirmDialog(
+    `确定删除扫描任务${target ? `（${ZhiShield.esc(target)}）` : ""}？<br><span style="color:#64748b">${tip}删除后不可恢复。</span>`,
+    async () => {
+      try {
+        const r = await ZhiShield.api("/api/scanner/shelling/delete/" + encodeURIComponent(scanId), { json: {} });
+        if (!r || r.code !== 0) { ZhiShield.error((r && r.msg) || "删除失败"); return; }
+        delete scScanTargets[scanId];
+        ZhiShield.success(r.msg || "已删除");
+        /* 正在查看的扫描被删除时，收起结果卡片避免残留 */
+        if (scanId === scLastScanId) {
+          scLastScanId = "";
+          document.getElementById("scResultCard").style.display = "none";
+        }
+        loadRecentScans(scPage);
+      } catch (e) { ZhiShield.error("删除失败：" + e.message); }
+    },
+    "删除"
+  );
+}
+
+/* ==================== 备注双击编辑 ==================== */
+function scRenderRemarkCell(td, text) {
+  td.dataset.editing = "";
+  td.dataset.remark = text || "";
+  td.innerHTML = ZhiShield.esc(text) || '<span style="color:#cbd5e1">—</span>';
+}
+
+function startEditRemark(td) {
+  if (!td || td.dataset.editing === "1") return;
+  const scanId = td.dataset.scanId || "";
+  if (!scanId) return;
+  const old = td.dataset.remark || "";
+  td.dataset.editing = "1";
+  td.innerHTML = `<input class="input sc-remark-input" maxlength="200" value="${ZhiShield.esc(old)}"
+      style="height:26px;padding:0 6px;font-size:12px;min-width:140px">`;
+  const input = td.querySelector("input");
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const val = (input.value || "").trim();
+    if (!save || val === old) { scRenderRemarkCell(td, old); return; }
+    scRenderRemarkCell(td, val);            /* 先乐观更新，失败再回滚 */
+    try {
+      const r = await ZhiShield.api("/api/scanner/shelling/remark/" + encodeURIComponent(scanId), { json: { remark: val } });
+      if (!r || r.code !== 0) {
+        ZhiShield.error((r && r.msg) || "备注保存失败");
+        scRenderRemarkCell(td, old);
+        return;
+      }
+      scRenderRemarkCell(td, r.data.remark);
+      ZhiShield.success("备注已更新");
+    } catch (e) {
+      ZhiShield.error("备注保存失败：" + e.message);
+      scRenderRemarkCell(td, old);
+    }
+  };
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+    else if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
+document.getElementById("scRecentTable").addEventListener("dblclick", (e) => {
+  const td = e.target && e.target.closest ? e.target.closest("td.sc-remark") : null;
+  if (td) startEditRemark(td);
+});
+
+loadScanOptions();
+loadRecentScans(1);
+</script>
+{% endblock %}

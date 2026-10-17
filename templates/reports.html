@@ -1,0 +1,703 @@
+{% extends "base.html" %}
+{% block title %}报告管理{% endblock %}
+{% block page_title %}报告管理{% endblock %}
+{% block page_crumb %}报告 / 漏洞报告列表与导出{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="toolbar">
+    <input class="input" id="kwUnit" placeholder="按单位搜索..." style="width:180px">
+    <input class="input" id="kwVul" placeholder="按漏洞搜索..." style="width:180px" onkeydown="if(event.key==='Enter')loadReports(1)">
+    <select class="select" id="sevFilter" style="width:120px" onchange="loadReports(1)">
+      <option value="">全部等级</option>
+      <option value="critical">严重</option><option value="high">高危</option>
+      <option value="medium">中危</option><option value="low">低危</option>
+      <option value="info">信息</option><option value="unknown">未知</option>
+    </select>
+    <select class="select" id="lcFilter" style="width:130px" onchange="loadReports(1)">
+      <option value="">全部处置状态</option>
+      <option value="open">待整改</option>
+      <option value="fixing">整改中</option>
+      <option value="fixed">已修复待复测</option>
+      <option value="verified">复测通过</option>
+    </select>
+    <button class="btn btn-primary" onclick="loadReports(1)">搜索</button>
+    <span class="spacer"></span>
+    <button class="btn btn-warning btn-sm" onclick="openExport()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>导出报告
+    </button>
+    <button class="btn btn-ghost btn-sm" onclick="openQA()">📋 质量体检</button>
+    <button class="btn btn-ghost btn-sm" onclick="openTemplateMgr()">模板管理</button>
+    <button class="btn btn-primary btn-sm" onclick="openAdd()">+ 新增报告</button>
+  </div>
+  <div class="table-wrap" id="reportTable"><div class="loading-mask"><div class="spinner"></div>加载中...</div></div>
+  <div class="pagination" id="reportPager"></div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+let curPage = 1, curLimit = 10, totalCount = 0, allReports = [];
+
+async function loadReports(page) {
+  curPage = page;
+  const el = document.getElementById("reportTable");
+  ZhiShield.showLoading(el);
+  const u = document.getElementById("kwUnit").value.trim();
+  const v = document.getElementById("kwVul").value.trim();
+  const s = document.getElementById("sevFilter").value;
+  const lc = document.getElementById("lcFilter").value;
+  const r = await ZhiShield.api(`/api/reports?page=${page}&limit=${curLimit}&unitName=${encodeURIComponent(u)}&vulName=${encodeURIComponent(v)}&severity=${s}&lifecycle=${lc}`);
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  totalCount = r.count;
+  allReports = r.data;
+  if (!r.data.length) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-title">暂无报告</div><div class="empty-desc">点击「+ 新增报告」手工录入，或使用「AI 智能生成」批量产出</div></div>`;
+  } else {
+    let html = `<table class="data-table"><thead><tr>
+      <th style="width:32px"><input type="checkbox" id="checkAll" onchange="toggleAll(this)"></th>
+      <th>ID</th><th>单位名称</th><th>系统名称</th><th>漏洞名称</th><th>等级</th><th>处置状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>`;
+    r.data.forEach(x => {
+      html += `<tr>
+        <td><input type="checkbox" class="row-check" value="${x.id}"></td>
+        <td>${x.id}</td>
+        <td style="font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ZhiShield.esc(x.unit_name)}</td>
+        <td style="max-width:120px">${ZhiShield.esc(x.system_name || "-")}</td>
+        <td style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ZhiShield.esc(x.vul_name)}</td>
+        <td>${ZhiShield.sevBadge(x.severity)}</td>
+        <td>${lcCell(x)}</td>
+        <td style="font-size:12px;color:#94a3b8">${ZhiShield.fmtTime(x.updated_at)}</td>
+        <td style="white-space:nowrap">
+          <a class="link-btn" onclick="viewReport(${x.id})">详情</a>
+          <a class="link-btn" onclick="qaOne(${x.id})">体检</a>
+          <a class="link-btn" onclick="editReport(${x.id})">编辑</a>
+          <a class="link-btn danger" onclick="delReport(${x.id})">删除</a>
+        </td></tr>`;
+    });
+    el.innerHTML = html + "</tbody></table>";
+  }
+  ZhiShield.renderPagination(document.getElementById("reportPager"), curPage, totalCount, curLimit, loadReports);
+}
+function toggleAll(cb) {
+  document.querySelectorAll(".row-check").forEach(c => c.checked = cb.checked);
+}
+function selectedIds() {
+  return Array.from(document.querySelectorAll(".row-check:checked")).map(c => parseInt(c.value));
+}
+
+/* ---------------- 漏洞处置全生命周期闭环 ---------------- */
+const LC_CN = {open:"待整改", fixing:"整改中", fixed:"已修复待复测", verified:"复测通过"};
+const LC_STYLE = {
+  open:   ["#dc2626","#fee2e2"],
+  fixing: ["#2563eb","#dbeafe"],
+  fixed:  ["#b45309","#fef3c7"],
+  verified:["#15803d","#dcfce7"]
+};
+const LC_NEXT = {
+  open:   [{v:"fixing", t:"开始整改"}],
+  fixing:[{v:"fixed", t:"提交整改"}, {v:"open", t:"退回"}],
+  fixed: [{v:"verified", t:"复测通过"}, {v:"fixing", t:"复测退回"}],
+  verified:[{v:"fixed", t:"撤销复测"}]
+};
+function lcBadge(lc) {
+  const k = lc || "open"; const c = LC_CN[k]; const st = LC_STYLE[k] || LC_STYLE.open;
+  return `<span style="display:inline-block;padding:2px 9px;border-radius:10px;font-size:12px;font-weight:600;color:${st[0]};background:${st[1]};white-space:nowrap">${c}</span>`;
+}
+function lcCell(x) {
+  const k = x.lifecycle || "open";
+  const acts = (LC_NEXT[k] || []).map(n =>
+    `<a class="link-btn" style="font-size:12px" onclick="moveLifecycle(${x.id},'${n.v}')">${n.t}</a>`).join("");
+  return `<div style="display:flex;flex-direction:column;gap:4px">${lcBadge(k)}<div style="display:flex;gap:8px;flex-wrap:wrap">${acts}</div></div>`;
+}
+async function moveLifecycle(id, target) {
+  const r = await ZhiShield.api("/api/report/lifecycle", { json: { id, lifecycle: target } });
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  ZhiShield.success(r.msg);
+  loadReports(curPage);
+}
+
+/* ---------------- 报告表单 ---------------- */
+let unitTxtInput, vulTxtInput;
+let rteDetail = null, rteProve = null;
+let detailImgZone = null, proveImgZone = null;
+
+function parseImgField(v) {
+  if (Array.isArray(v)) return v.slice();
+  if (!v) return [];
+  try { const a = JSON.parse(v); return Array.isArray(a) ? a : []; }
+  catch (e) { return v.split(",").map(s => s.trim()).filter(Boolean); }
+}
+
+function reportForm(u = {}) {
+  const v = (k) => ZhiShield.esc(u[k] || "");
+  // input 为空元素，值必须放在 value 属性中（原来写在 <input>…</input> 之间会被浏览器丢弃，导致编辑回填失败）；textarea 才用标签体
+  const f = (k, label, ph = "", type = "input") => type === "textarea"
+    ? `<div class="form-item"><label>${label}</label>
+       <textarea class="textarea" id="r_${k}" placeholder="${ph}" rows="2">${v(k)}</textarea></div>`
+    : `<div class="form-item"><label>${label}</label>
+       <input class="input" id="r_${k}" placeholder="${ph}" value="${v(k)}"></div>`;
+  return `<div class="form-grid">
+    ${f("unit_name", "单位名称", "支持模糊搜索自动匹配；填写已有单位可带出历史域名", "input")}
+    ${f("system_name", "系统名称", "如：官网 / 后台管理系统")}
+    ${f("vul_name", "漏洞名称", "支持从漏洞库选择", "input")}
+    <div class="form-item"><label>漏洞等级</label><select class="select" id="r_severity">
+      ${["critical","high","medium","low","info","unknown"].map(s =>
+        `<option value="${s}" ${u.severity===s?"selected":""}>${({critical:"严重",high:"高危",medium:"中危",low:"低危",info:"信息",unknown:"未知"})[s]}</option>`).join("")}
+    </select></div>
+    <div class="form-item"><label>漏洞地址 / URL<span style="font-weight:400;color:#0ea5e9;font-size:12px"> 填好自动识别域名</span></label>
+      <input class="input" id="r_address" placeholder="http(s)://、mqtt://、IP:端口 均可" value="${v("address")}"></div>
+    <div class="form-item"><label>域名</label>
+      <input class="input" id="r_domain" placeholder="根据地址自动填入，可手动修改" value="${v("domain")}"></div>
+    <div class="form-item full"><div class="unit-assist" id="unitAssist"></div></div>
+    <div class="form-item full"><label>漏洞描述</label><textarea class="textarea" id="r_description" rows="3">${ZhiShield.esc(u.description || "")}</textarea></div>
+    <div class="form-item full"><label>漏洞危害</label><textarea class="textarea" id="r_harm" rows="2">${ZhiShield.esc(u.harm || "")}</textarea></div>
+    <div class="form-item full"><label>检测过程（富文本，可插图）</label><textarea class="textarea" id="r_detail" rows="5" style="display:none">${ZhiShield.esc(u.detail || "")}</textarea></div>
+    <div class="form-item full"><label style="margin-bottom:4px">检测过程图片（多张，导出时附在“检测过程”之后）</label><div id="detailImgZone"></div></div>
+    <div class="form-item full"><label>整改建议</label><textarea class="textarea" id="r_suggestion" rows="3">${ZhiShield.esc(u.suggestion || "")}</textarea></div>
+    <div class="form-item full"><label>归属证明（富文本，可插图）<span style="font-weight:400;color:#94a3b8"> · <a class="link-btn" style="font-size:12px" onclick="loadLatestProve()">按域名获取最近检测记录</a> · <a class="link-btn" id="autoAttribBtn" style="font-size:12px;color:#16a34a" onclick="autoFetchAttrib()">一键自动取证（截取官网页脚备案信息）</a></span></label><textarea class="textarea" id="r_prove" rows="5" style="display:none">${ZhiShield.esc(u.prove || "")}</textarea></div>
+    <div class="form-item full"><label style="margin-bottom:4px">归属证明图片（多张，导出时附在“归属证明”之后）</label><div id="proveImgZone"></div></div>
+  </div>`;
+}
+
+/* 按域名获取最近检测记录，填充归属证明 */
+async function loadLatestProve() {
+  const domain = (document.getElementById("r_domain") || {}).value || "";
+  if (!domain.trim()) { ZhiShield.error("请先填写域名"); return; }
+  const r = await ZhiShield.api("/api/report/latest-prove?domain=" + encodeURIComponent(domain.trim()));
+  if (r.code === 0) {
+    if (rteProve) rteProve.setValue(r.data.prove || "");
+    // 同时把该域名上一份报告的归属证明图片带出来，无需重新截图
+    const imgs = Array.isArray(r.data.prove_images) ? r.data.prove_images : [];
+    if (proveImgZone) proveImgZone.setValue(imgs);
+    ZhiShield.success(imgs.length ? ("已填入最近检测记录及 " + imgs.length + " 张归属证明图片") : "已填入最近检测记录");
+  } else ZhiShield.info(r.msg || "未找到历史记录");
+}
+
+/* 一键自动归属取证：按域名/地址打开官网截图、识别 ICP/公网安备/主体，回填归属证明文字与图片 */
+async function autoFetchAttrib() {
+  const domEl = document.getElementById("r_domain");
+  const addrEl = document.getElementById("r_address");
+  const domain = (domEl && domEl.value || "").trim();
+  const address = (addrEl && addrEl.value || "").trim();
+  if (!domain && !address) { ZhiShield.error("请先填写域名或漏洞地址"); return; }
+  const btn = document.getElementById("autoAttribBtn");
+  if (btn) { btn.style.opacity = ".55"; btn.style.pointerEvents = "none"; }
+  ZhiShield.info("正在读取目标站点页脚备案信息，约需 10~20 秒，请勿重复点击…");
+  try {
+    const r = await ZhiShield.api("/api/report/auto-attrib",
+      { method: "POST", json: { domain, address } });
+    if (r.code === 0) {
+      const d = r.data || {};
+      if (rteProve && d.summary) rteProve.setValue(d.summary);
+      if (d.image_url && proveImgZone) {
+        const list = proveImgZone.getValue();
+        if (!list.includes(d.image_url)) proveImgZone.setValue(list.concat([d.image_url]));
+      }
+      ZhiShield.success(r.msg || "已自动完成归属取证");
+    } else {
+      ZhiShield.info((r.msg || "未能自动获取") + "（可手动上传截图）");
+    }
+  } catch (e) {
+    ZhiShield.error("自动取证失败，请手动上传归属截图");
+  } finally {
+    if (btn) { btn.style.opacity = "1"; btn.style.pointerEvents = "auto"; }
+  }
+}
+
+function setupAutocomplete(inputId, apiUrl, onPick) {  const input = document.getElementById(inputId);
+  if (!input) return;
+  let box = null;
+  const showBox = () => {
+    if (box) box.remove();
+    box = document.createElement("div");
+    box.style.cssText = "position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(15,23,42,.12);z-index:300;max-height:220px;overflow:auto";
+    input.parentNode.style.position = "relative";
+    input.parentNode.appendChild(box);
+  };
+  input.addEventListener("input", async () => {
+    const q = input.value.trim();
+    if (!q) { if (box) { box.remove(); box = null; } return; }
+    const r = await ZhiShield.api(apiUrl + encodeURIComponent(q));
+    if (!r.code === 0 || !r.data.length) { if (box) box.remove(); return; }
+    showBox();
+    box.innerHTML = r.data.map(d => `<div data-v='${JSON.stringify(d).replace(/'/g,"&#39;")}' style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f1f5f9">${ZhiShield.esc(d.unit_name || d.name || d.enterprise_name)}</div>`).join("");
+    box.querySelectorAll("div[data-v]").forEach(d => d.addEventListener("click", () => {
+      onPick(JSON.parse(d.dataset.v.replace(/&#39;/g, "'")));
+      box.remove(); box = null;
+    }));
+  });
+  input.addEventListener("blur", () => setTimeout(() => { if (box) { box.remove(); box = null; } }, 200));
+}
+
+/* 表单公共初始化：自动补全、富文本、两个独立多图区、地址→域名自动识别、同单位历史资产匹配 */
+function initReportForm(u) {
+  u = u || {};
+  setupAutocomplete("r_unit_name", "/api/unit/search?q=", d => {
+    document.getElementById("r_unit_name").value = d.enterprise_name;
+    loadUnitAssets();
+  });
+  setupAutocomplete("r_vul_name", "/api/vulnerability/search?q=", d => {
+    document.getElementById("r_vul_name").value = d.name;
+    document.getElementById("r_severity").value = d.severity;
+    document.getElementById("r_description").value = d.description || "";
+    document.getElementById("r_harm").value = d.harm || "";
+    document.getElementById("r_suggestion").value = d.suggestion || "";
+  });
+  rteDetail = ZhiShield.rteInit(document.getElementById("r_detail"));
+  rteProve = ZhiShield.rteInit(document.getElementById("r_prove"));
+  detailImgZone = ZhiShield.imageZone(document.getElementById("detailImgZone"),
+    { value: parseImgField(u.detail_images), hint: "检测过程截图 / 复现图（可多张，拖拽排序）" });
+  proveImgZone = ZhiShield.imageZone(document.getElementById("proveImgZone"),
+    { value: parseImgField(u.prove_images), hint: "归属证明截图：ICP / 备案 / 资产归属等（可多张）" });
+
+  const addr = document.getElementById("r_address");
+  const dom = document.getElementById("r_domain");
+  // 填地址自动识别主机名并回填；用户手动改过域名后不再覆盖
+  const autoFill = () => {
+    const h = ZhiShield.extractHost(addr.value);
+    if (h && (!dom.value.trim() || dom.dataset.auto === "1")) {
+      dom.value = h; dom.dataset.auto = "1";
+    }
+  };
+  addr.addEventListener("input", autoFill);
+  addr.addEventListener("blur", autoFill);
+  dom.addEventListener("input", () => { dom.dataset.auto = "0"; });
+
+  // 单位名失焦 → 拉取该单位历史域名 / 系统，点击即可带出
+  document.getElementById("r_unit_name")
+    .addEventListener("blur", () => setTimeout(loadUnitAssets, 220));
+  if (u.unit_name) loadUnitAssets();
+}
+
+/* 同单位历史域名 / 系统自动匹配 */
+async function loadUnitAssets() {
+  const nameEl = document.getElementById("r_unit_name");
+  const box = document.getElementById("unitAssist");
+  if (!nameEl || !box) return;
+  const name = nameEl.value.trim();
+  if (!name) { box.innerHTML = ""; return; }
+  const r = await ZhiShield.api("/api/report/unit-assets?unit_name=" + encodeURIComponent(name));
+  if (r.code !== 0 || !r.data) { box.innerHTML = ""; return; }
+  const d = r.data;
+  let html = "";
+  if (d.domains && d.domains.length) {
+    // 新增（域名框为空）且该单位只有一个历史域名时，自动带出，免去再点
+    const dm0 = document.getElementById("r_domain");
+    if (d.domains.length === 1 && dm0 && !dm0.value.trim()) {
+      dm0.value = d.domains[0]; dm0.dataset.auto = "1";
+    }
+    html += '<span style="font-size:12px;color:#94a3b8;align-self:center">历史域名：</span>' +
+      d.domains.map(x => `<span class="ua-chip" data-type="domain" data-val="${ZhiShield.esc(x)}">${ZhiShield.esc(x)}</span>`).join("");
+  }
+  if (d.systems && d.systems.length) {
+    html += '<span style="font-size:12px;color:#94a3b8;align-self:center;margin-left:6px">历史系统：</span>' +
+      d.systems.slice(0, 5).map(x => `<span class="ua-chip" data-type="system" data-val="${ZhiShield.esc(x)}">${ZhiShield.esc(x)}</span>`).join("");
+  }
+  box.innerHTML = html;
+  box.querySelectorAll(".ua-chip").forEach(c => c.addEventListener("click", () => {
+    if (c.dataset.type === "domain") {
+      const dm = document.getElementById("r_domain");
+      dm.value = c.dataset.val; dm.dataset.auto = "0";
+    } else {
+      document.getElementById("r_system_name").value = c.dataset.val;
+    }
+  }));
+}
+
+function openAdd() {
+  ZhiShield.openModal({
+    title: "新增报告",
+    size: "xl",
+    body: reportForm(),
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doSaveReport(0)">保存</button>`
+  });
+  initReportForm({});
+}
+
+async function editReport(id) {
+  const r = await ZhiShield.api("/api/report/detail?id=" + id);
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  const u = r.data;
+  ZhiShield.openModal({
+    title: "编辑报告 #" + id,
+    size: "xl",
+    body: reportForm(u),
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doSaveReport(${id})">保存</button>`
+  });
+  setupAutocomplete("r_unit_name", "/api/unit/search?q=", d => {
+    document.getElementById("r_unit_name").value = d.enterprise_name;
+  });
+  setupAutocomplete("r_vul_name", "/api/vulnerability/search?q=", d => {
+    document.getElementById("r_vul_name").value = d.name;
+    document.getElementById("r_severity").value = d.severity;
+  });
+  rteDetail = ZhiShield.rteInit(document.getElementById("r_detail"));
+  rteProve = ZhiShield.rteInit(document.getElementById("r_prove"));
+}
+
+async function doSaveReport(id) {
+  const g = k => { const el = document.getElementById("r_" + k); return el ? el.value : ""; };
+  const body = {
+    unit_name: g("unit_name").trim(), system_name: g("system_name").trim(),
+    vul_name: g("vul_name").trim(), domain: g("domain").trim(),
+    address: g("address").trim(), description: g("description"),
+    harm: g("harm"), suggestion: g("suggestion"),
+    severity: document.getElementById("r_severity").value,
+    detail: rteDetail ? rteDetail.getValue() : g("detail"),
+    prove: rteProve ? rteProve.getValue() : g("prove"),
+    detail_images: detailImgZone ? detailImgZone.getValue() : [],
+    prove_images: proveImgZone ? proveImgZone.getValue() : [],
+  };
+  if (!body.unit_name || !body.vul_name) { ZhiShield.error("单位名称与漏洞名称必填"); return; }
+  const url = id ? "/api/report/update" : "/api/report/add";
+  if (id) body.id = id;
+  const r = await ZhiShield.api(url, { json: body });
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadReports(curPage); }
+  else ZhiShield.error(r.msg);
+}
+
+async function viewReport(id) {
+  const r = await ZhiShield.api("/api/report/detail?id=" + id);
+  if (r.code !== 0) return;
+  const u = r.data;
+  ZhiShield.openModal({
+    title: "报告详情",
+    size: "lg",
+    body: `<div>
+      <div class="kv-row"><div class="k">单位名称</div><div class="v">${ZhiShield.esc(u.unit_name)}</div></div>
+      <div class="kv-row"><div class="k">系统名称</div><div class="v">${ZhiShield.esc(u.system_name || "-")}</div></div>
+      <div class="kv-row"><div class="k">域名</div><div class="v">${ZhiShield.esc(u.domain || "-")}</div></div>
+      <div class="kv-row"><div class="k">漏洞名称</div><div class="v">${ZhiShield.esc(u.vul_name)}</div></div>
+      <div class="kv-row"><div class="k">漏洞等级</div><div class="v">${ZhiShield.sevBadge(u.severity)}</div></div>
+      <div class="kv-row"><div class="k">漏洞地址</div><div class="v">${ZhiShield.esc(u.address || "-")}</div></div>
+      <div class="kv-row"><div class="k">漏洞描述</div><div class="v">${ZhiShield.esc(u.description || "-")}</div></div>
+      <div class="kv-row"><div class="k">漏洞危害</div><div class="v">${ZhiShield.esc(u.harm || "-")}</div></div>
+      <div class="kv-row"><div class="k">整改建议</div><div class="v">${ZhiShield.esc(u.suggestion || "-")}</div></div>
+      <div class="kv-row"><div class="k">处置状态</div><div class="v">
+        ${lcBadge(u.lifecycle)} ${u.lifecycle_at ? `<span style="font-size:12px;color:#94a3b8;margin-left:6px">最近操作：${ZhiShield.esc(u.lifecycle_at)}</span>` : ""}
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">
+          ${(LC_NEXT[u.lifecycle||"open"]||[]).map(n=>`<a class="link-btn" onclick="ZhiShield.closeModal();moveLifecycle(${id},'${n.v}')">${n.t}</a>`).join("")}
+        </div>
+      </div></div>
+      ${u.lifecycle_remark ? `<div class="kv-row"><div class="k">整改轨迹</div><div class="v"><div style="white-space:pre-wrap;font-size:13px;line-height:1.7;color:#475569">${ZhiShield.esc(u.lifecycle_remark)}</div></div></div>` : ""}
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="editReport(${id})">编辑</button>
+             <button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`
+  });
+}
+
+function delReport(id) {
+  ZhiShield.confirmDialog("确定删除该报告？", async () => {
+    const r = await ZhiShield.api("/api/report/delete", { json: { id } });
+    if (r.code === 0) { ZhiShield.success("已删除"); loadReports(curPage); } else ZhiShield.error(r.msg);
+  }, "删除");
+}
+
+/* ---------------- 导出 ---------------- */
+let templateList = [];
+async function loadTemplates() {
+  const r = await ZhiShield.api("/api/report/templates");
+  if (r.code === 0) templateList = r.data;
+}
+
+async function openExport() {
+  const ids = selectedIds();
+  if (!ids.length && !allReports.length) { ZhiShield.error("请先勾选要导出的报告"); return; }
+  // 未勾选时仅提示“将导出当前列表全部”，真正的兜底在 doExport 内完成，
+  // 不再改动列表勾选状态，避免取消后残留全选、导致误导出多余报告。
+  const sel = await loadTemplates();
+  const customOpts = templateList.map(t => `<option value="${t.id}" ${t.is_default ? "selected" : ""}>${ZhiShield.esc(t.name)}${t.is_default ? "（默认）" : ""}</option>`).join("");
+  const appr = await ZhiShield.api("/api/settings/appearance");
+  ZhiShield.openModal({
+    title: "导出 Word 报告",
+    size: "",
+    body: `<div class="form-grid">
+      <div class="form-item full"><label>导出格式</label>
+        <select class="select" id="expFormat">
+          <option value="docx">Word（.docx）</option>
+          <option value="pdf">PDF（.pdf）</option>
+        </select></div>
+      <div class="form-item full"><label>导出模板</label>
+        <select class="select" id="expTemplate" onchange="document.getElementById('customTplRow').style.display=this.value==='custom'?'':'none'">
+          <option value="custom" selected>标准模板（Word 占位符自动填充，与原工具一致）</option>
+          <option value="normal">内置普通模板（漏洞详情排版）</option>
+          <option value="gongwen">网信办公文模板（隐患通报，仅单条）</option>
+          <option value="summary">汇总模板（多漏洞清单）</option>
+        </select></div>
+      <div class="form-item full" id="customTplRow" style="display:">
+        <label>选择 Word 模板（自动填充其中的 \x7b\x7b占位符\x7d\x7d）</label>
+        <select class="select" id="expCustomTpl">${customOpts || "<option value=''>暂无模板，请先到模板管理上传或下载标准模板</option>"}</select>
+      </div>
+      <div class="form-item full"><label>报告落款单位（可选）</label><input class="input" id="expOrg" value="${ZhiShield.esc((appr.data || {}).export_org || "")}" placeholder="如：XX 网络安全测评中心"></div>
+    </div>
+    <div style="margin-top:12px;font-size:12.5px;color:#64748b;background:#f8fafc;border-radius:8px;padding:10px">将导出 <b id="expCount">${selectedIds().length ? selectedIds().length + " 条" : "全部 " + allReports.length + " 条（当前列表；勾选可只导出指定报告）"}</b></div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-warning" id="expBtn" onclick="doExport()">生成并下载</button>`
+  });
+  const btn = document.getElementById("expBtn");
+  const orig = btn.innerHTML;
+  const _n = selectedIds();
+  document.getElementById("expCount").textContent = _n.length ? _n.length + " 条" : "全部 " + allReports.length + " 条（当前列表；勾选可只导出指定报告）";
+  btn.dataset.orig = orig;
+}
+
+async function doExport() {
+  const ids = selectedIds().length ? selectedIds() : allReports.map(r => r.id);
+  const fmt = document.getElementById("expFormat").value;
+  const tplKey = document.getElementById("expTemplate").value;
+  const tplId = tplKey === "custom" ? document.getElementById("expCustomTpl").value : "";
+  const org = document.getElementById("expOrg").value.trim();
+  if (fmt === "pdf" && tplKey === "custom") { ZhiShield.error("自定义模板暂仅支持 Word，请选择 PDF 内置模板或改用 Word"); return; }
+  if (fmt === "pdf" && tplKey === "gongwen" && ids.length !== 1) {
+    ZhiShield.error("公文模板仅支持单条报告，请只勾选一条"); return;
+  }
+  const btn = document.getElementById("expBtn");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:14px;height:14px"></span> 生成中...';
+  try {
+    const endpoint = fmt === "pdf" ? "/api/report/export-pdf" : "/api/report/export";
+    const r = await ZhiShield.api(endpoint, { json: { report_ids: ids, template_key: tplKey, template_id: tplId, org_footer: org } });
+    if (r.code === 0) {
+      ZhiShield.success("报告生成成功，开始下载");
+      ZhiShield.closeModal();
+      setTimeout(() => { window.location.href = r.url; }, 400);
+    } else ZhiShield.error(r.msg);
+  } catch (e) { ZhiShield.error("导出失败：" + e.message); }
+  btn.disabled = false; btn.innerHTML = btn.dataset.orig;
+}
+
+/* ---------------- 质量体检 ---------------- */
+async function openQA() {
+  ZhiShield.openModal({
+    title: "报告质量体检",
+    size: "lg",
+    body: `<div id="qaBody"><div class="loading-mask"><div class="spinner"></div>正在体检全部报告...</div></div>`,
+    footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`
+  });
+  const r = await ZhiShield.api("/api/report/qa");
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  const d = r.data;
+  const avgColor = d.average_score >= 90 ? "#16a34a" : d.average_score >= 75 ? "#2563eb" : d.average_score >= 60 ? "#ca8a04" : "#dc2626";
+  let html = `<div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap">
+    <div style="flex:1;min-width:130px;background:#f8fafc;border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:30px;font-weight:900;color:${avgColor}">${d.average_score}</div><div style="font-size:12px;color:#64748b">平均分</div></div>
+    <div style="flex:1;min-width:130px;background:#f8fafc;border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:30px;font-weight:900">${d.total}</div><div style="font-size:12px;color:#64748b">报告总数</div></div>
+    <div style="flex:1;min-width:130px;background:#f8fafc;border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:30px;font-weight:900;color:#16a34a">${d.passed_count}</div><div style="font-size:12px;color:#64748b">合格数</div></div>
+    <div style="flex:1;min-width:130px;background:#f8fafc;border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:30px;font-weight:900;color:#ea580c">${d.issue_count}</div><div style="font-size:12px;color:#64748b">问题项</div></div>
+  </div>`;
+  if (!d.results.length) {
+    html += `<div style="text-align:center;color:#94a3b8;padding:20px">暂无报告</div>`;
+  } else {
+    html += d.results.map(x => {
+      const c = x.score >= 90 ? "#16a34a" : x.score >= 75 ? "#2563eb" : x.score >= 60 ? "#ca8a04" : "#dc2626";
+      const issues = x.issues.length ? x.issues.map(i => {
+        const ic = {critical:"#dc2626",high:"#ea580c",medium:"#ca8a04",low:"#64748b"}[i.level] || "#64748b";
+        return `<li style="color:${ic};font-size:12.5px;margin:3px 0">${ZhiShield.esc(i.msg)}</li>`;
+      }).join("") : `<span style="color:#16a34a;font-size:12.5px">✓ 未发现问题</span>`;
+      return `<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span style="font-size:18px;font-weight:900;color:${c};min-width:42px">${x.score}</span>
+          <span class="badge ${x.passed?'badge-green':'badge-critical'}">${x.level}</span>
+          <b style="font-size:13px;flex:1">${ZhiShield.esc(x.unit_name)} · ${ZhiShield.esc(x.vul_name)}</b>
+          <a class="link-btn" onclick="ZhiShield.closeModal();qaOne(${x.id})">详情/AI点评</a>
+        </div>
+        <ul style="padding-left:20px;margin:0">${issues}</ul>
+      </div>`;
+    }).join("");
+  }
+  document.getElementById("qaBody").innerHTML = html;
+}
+
+async function qaOne(id) {
+  const r = await ZhiShield.api("/api/report/qa-one?id=" + id);
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  const x = r.data;
+  const c = x.score >= 90 ? "#16a34a" : x.score >= 75 ? "#2563eb" : x.score >= 60 ? "#ca8a04" : "#dc2626";
+  const issues = x.issues.length ? `<ul style="padding-left:20px">${x.issues.map(i => {
+    const ic = {critical:"#dc2626",high:"#ea580c",medium:"#ca8a04",low:"#64748b"}[i.level] || "#64748b";
+    return `<li style="color:${ic};margin:4px 0">${ZhiShield.esc(i.msg)}</li>`;
+  }).join("")}</ul>` : `<div style="color:#16a34a">✓ 各项检查通过，报告质量优秀</div>`;
+  ZhiShield.openModal({
+    title: "单份报告体检",
+    size: "lg",
+    body: `<div style="display:flex;align-items:center;gap:16px;margin-bottom:14px">
+      <div style="width:74px;height:74px;border-radius:50%;background:${c};color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center">
+        <div style="font-size:24px;font-weight:900">${x.score}</div></div>
+      <div><div style="font-weight:800;font-size:15px">${ZhiShield.esc(x.unit_name)} · ${ZhiShield.esc(x.vul_name)}</div>
+      <div style="color:#64748b;font-size:12.5px;margin-top:3px">检测过程字数 ${x.detail_length} · 证据图片 ${x.evidence_images} 张</div></div>
+    </div>${issues}
+    <div id="aiGradeBox" style="margin-top:14px"></div>`,
+    footer: `<button class="btn btn-ghost" onclick="aiGrade(${id})">🤖 AI 专家点评</button>
+             <button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`
+  });
+}
+
+async function aiGrade(id) {
+  const box = document.getElementById("aiGradeBox");
+  box.innerHTML = `<div class="loading-mask"><div class="spinner"></div>AI 点评中...</div>`;
+  const r = await ZhiShield.api("/api/ai/grade", { method: "POST", json: { id } });
+  if (r.code !== 0) { box.innerHTML = `<span style="color:#ef4444">${ZhiShield.esc(r.msg)}</span>`; return; }
+  const a = r.data.ai;
+  if (!a) { box.innerHTML = `<div style="color:#64748b;font-size:13px">未配置 AI Key（可在系统设置配置，或使用模拟模式）</div>`; return; }
+  let html = `<div style="background:linear-gradient(135deg,#eff6ff,#f5f3ff);border-radius:10px;padding:14px">`;
+  if (a.score != null) html += `<div style="font-weight:800;margin-bottom:6px">AI 评分：${a.score} 分</div>`;
+  if (a.highlights) html += `<div style="font-size:13px;margin-bottom:8px"><b>亮点：</b>${ZhiShield.esc(a.highlights)}</div>`;
+  if (a.problems && a.problems.length) html += `<div style="font-size:13px;margin-bottom:6px"><b>问题：</b><ul style="padding-left:20px;margin:4px 0">${a.problems.map(p=>`<li>${ZhiShield.esc(p)}</li>`).join("")}</ul></div>`;
+  if (a.suggestions && a.suggestions.length) html += `<div style="font-size:13px"><b>改进建议：</b><ul style="padding-left:20px;margin:4px 0">${a.suggestions.map(p=>`<li>${ZhiShield.esc(p)}</li>`).join("")}</ul></div>`;
+  if (a.mock) html += `<div style="font-size:11px;color:#94a3b8;margin-top:6px">当前为模拟点评</div>`;
+  box.innerHTML = html + "</div>";
+}
+
+/* ---------------- 模板管理 ---------------- */
+async function openTemplateMgr() {
+  const r = await ZhiShield.api("/api/report/templates");
+  const PH_L = "\x7b\x7b", PH_R = "\x7d\x7d";
+  const PH_FIELDS = ["单位名称","漏洞名称","系统名称","域名","漏洞地址","漏洞描述","检测过程","漏洞等级","漏洞危害","整改建议","归属证明","报告日期","单位落款"];
+  const PH_ALL = PH_FIELDS.map(x => PH_L + x + PH_R).join(" ");
+  const chip = (k) => `<span style="display:inline-block;background:#eef2ff;color:#3730a3;border-radius:6px;padding:1px 7px;margin:2px 3px 2px 0;font-size:11.5px">${PH_L}${ZhiShield.esc(k)}${PH_R}</span>`;
+  const rows = (r.data || []).map(t => `<tr>
+    <td style="white-space:nowrap"><b>${ZhiShield.esc(t.name)}</b> ${t.is_default ? '<span class="badge badge-green">默认</span>' : ""}</td>
+    <td style="max-width:340px">${(t.placeholders && t.placeholders.length) ? t.placeholders.map(chip).join("") : '<span style="color:#94a3b8;font-size:12px">未检测到占位符（静态模板）</span>'}</td>
+    <td style="color:#94a3b8;font-size:12px;white-space:nowrap">${ZhiShield.fmtTime(t.created_at)}</td>
+    <td style="white-space:nowrap">
+      <a class="link-btn" href="/api/report/template/download?id=${t.id}">下载</a>
+      <a class="link-btn" onclick="setDefaultTpl(${t.id})">设为默认</a>
+      <a class="link-btn danger" onclick="delTpl(${t.id},'${ZhiShield.esc(t.name).replace(/'/g,"\\'")}')">删除</a>
+    </td></tr>`).join("");
+  ZhiShield.openModal({
+    title: "报告模板管理",
+    size: "lg",
+    body: `<div style="display:flex;flex-direction:column;gap:14px">
+      <div style="display:flex;gap:10px;align-items:flex-end">
+        <div class="form-item" style="flex:1"><label>模板名称</label><input class="input" id="tplName" placeholder="如：公司红头模板"></div>
+        <div class="form-item" style="flex:1"><label>上传 .docx 模板文件</label><input type="file" class="input" id="tplFile" accept=".docx"></div>
+        <button class="btn btn-primary" onclick="uploadTpl()">上传</button>
+      </div>
+      <div style="border:1px dashed #c7d2fe;border-radius:10px;padding:12px 14px;background:#f5f3ff">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span style="font-weight:700;color:#5b21b6;font-size:13.5px">方式二：导入一份现成报告 → 自动拆成模板 ✨</span>
+          <span style="flex:1"></span>
+          <input type="file" class="input" id="tplExtractFile" accept=".docx" style="flex:1;min-width:240px">
+          <button class="btn btn-primary" onclick="extractTplPreview()">导入并智能识别字段</button>
+        </div>
+        <div style="font-size:12px;color:#6d28d9;margin-top:7px;line-height:1.8">
+          直接选一份你已有的送检报告（如“某单位存在某漏洞.docx”），系统自动识别“地址/描述/检测过程/等级/建议/归属”等段落并替换成占位符，<b>保留原排版字体</b>、自动剔除旧截图；识别结果可在下一步逐条核对修改。以后新增报告只填新内容，导出就与这份报告<b>版式一模一样</b>。
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;line-height:1.9">
+        <b>用法：</b>在 Word 里用 <b>${PH_L}占位符${PH_R}</b> 标出要自动填充的位置，保存为 .docx 后上传；导出时选择该模板，系统自动把报告内容填进去（富文本换行、证据图片也会保留）。
+        支持字段：<span style="color:#3730a3">${PH_ALL}</span><br>
+        <a href="/api/settings/builtin-template/guide" style="color:var(--primary);font-weight:600">⬇ 下载系统标准模板（含占位符，可直接改造成你的模板）</a>
+      </div>
+      <table class="data-table"><thead><tr><th>模板名称</th><th>可自动填充字段</th><th>上传时间</th><th>操作</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="empty-row">暂无模板</td></tr>'}</tbody></table>
+    </div>`,
+    footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`
+  });
+}
+async function uploadTpl() {
+  const name = document.getElementById("tplName").value.trim();
+  const f = document.getElementById("tplFile").files[0];
+  if (!name || !f) { ZhiShield.error("请填写名称并选择文件"); return; }
+  const fd = new FormData();
+  fd.append("name", name); fd.append("file", f);
+  const r = await ZhiShield.api("/api/report/template/upload", { method: "POST", body: fd });
+  if (r.code === 0) {
+    if (r.placeholders && r.placeholders.length) {
+      ZhiShield.success(`上传成功，识别到 ${r.placeholders.length} 个可填充字段`);
+    } else {
+      ZhiShield.info("上传成功，但未检测到 \x7b\x7b占位符\x7d\x7d，该模板将按原样输出");
+    }
+    openTemplateMgr();
+  }
+  else ZhiShield.error(r.msg);
+}
+
+/* ---- 方式二：从成品报告自动拆分模板 ---- */
+let tplExtractData = null;
+async function extractTplPreview() {
+  const f = document.getElementById("tplExtractFile").files[0];
+  if (!f) { ZhiShield.error("请先选择一份 .docx 成品报告"); return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  ZhiShield.info("正在解析报告段落并识别字段…");
+  const r = await ZhiShield.api("/api/report/template/extract-preview", { method: "POST", body: fd });
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  tplExtractData = r.data;
+  renderTplMapModal();
+}
+
+function renderTplMapModal() {
+  const d = tplExtractData;
+  const L = "\x7b\x7b", R = "\x7d\x7d";   // 避免被 Jinja 当成模板变量
+  const fieldOpts = [`<option value="">— 不替换（保留原文）—</option>`,
+    `<option value="${d.title_key}">标题：${L}单位名称${R}存在${L}漏洞名称${R}</option>`]
+    .concat(d.fields.map(x => `<option value="${x.key}">${L}${x.name}${R}</option>`)).join("");
+  const rows = d.paragraphs
+    .filter(p => (p.text && p.text.trim()) || p.has_image)
+    .map(p => {
+      const tag = p.has_image ? '<span class="badge badge-info" style="margin-right:6px">图</span>'
+        : (p.heading ? '<span class="badge badge-blue" style="margin-right:6px">标题</span>' : "");
+      const sel = p.suggest ? fieldOpts.replace(`value="${p.suggest}"`, `value="${p.suggest}" selected`) : fieldOpts;
+      return `<tr>
+        <td style="width:42px;text-align:center;color:#94a3b8">${p.idx}</td>
+        <td style="max-width:420px">${tag}<span style="font-size:12.5px">${ZhiShield.esc(p.text || "［图片］")}</span></td>
+        <td style="width:210px"><select class="select tpl-map-sel" data-idx="${p.idx}">${sel}</select></td>
+      </tr>`;
+    }).join("");
+  ZhiShield.openModal({
+    title: "核对字段映射（自动识别，可手动调整）",
+    size: "lg",
+    body: `<div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-size:12.5px;color:#475569;line-height:1.9;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px">
+        系统已按章节标题自动猜测每段对应的字段（下拉已预选）。请<b>逐段核对</b>：内容段选择对应字段后会被替换成占位符；
+        “漏洞描述/检测过程/建议”等若有多段内容，只需保留一个占位段，其余内容段也选同一字段（会自动合并、不重复）；
+        成品里的旧截图会自动剔除，新报告导出时插入你上传的新图。
+      </div>
+      <div class="form-item" style="max-width:320px"><label>新模板名称</label>
+        <input class="input" id="tplMapName" placeholder="如：浙江送检标准版"></div>
+      <div style="max-height:46vh;overflow:auto;border:1px solid #e2e8f0;border-radius:8px">
+        <table class="data-table"><thead><tr><th>#</th><th>报告原文段落</th><th>映射为字段</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="3" class="empty-row">未解析到有效段落</td></tr>'}</tbody></table>
+      </div>
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="confirmBuildTpl()">生成模板</button>`
+  });
+}
+
+async function confirmBuildTpl() {
+  const name = (document.getElementById("tplMapName") || {}).value ? document.getElementById("tplMapName").value.trim() : "";
+  if (!name) { ZhiShield.error("请填写新模板名称"); return; }
+  const mapping = {};
+  document.querySelectorAll(".tpl-map-sel").forEach(sel => {
+    if (sel.value) mapping[sel.dataset.idx] = sel.value;
+  });
+  if (!Object.keys(mapping).length) { ZhiShield.error("请至少为一个内容段选择对应字段"); return; }
+  const r = await ZhiShield.api("/api/report/template/build-from-doc",
+    { json: { token: tplExtractData.token, name, mapping } });
+  if (r.code === 0) {
+    ZhiShield.success(`模板已生成，含 ${(r.placeholders || []).length} 个可自动填充字段`);
+    ZhiShield.closeModal();
+    openTemplateMgr();
+  } else ZhiShield.error(r.msg);
+}
+
+async function setDefaultTpl(id) {
+  const r = await ZhiShield.api("/api/report/template/set-default", { json: { id } });
+  if (r.code === 0) { ZhiShield.success(r.msg); openTemplateMgr(); } else ZhiShield.error(r.msg);
+}
+function delTpl(id, name) {
+  ZhiShield.confirmDialog(`确定删除模板「${name}」？`, async () => {
+    const r = await ZhiShield.api("/api/report/template/delete", { json: { id } });
+    if (r.code === 0) { ZhiShield.success("已删除"); openTemplateMgr(); } else ZhiShield.error(r.msg);
+  }, "删除");
+}
+
+loadTemplates();
+loadReports(1);
+</script>
+{% endblock %}

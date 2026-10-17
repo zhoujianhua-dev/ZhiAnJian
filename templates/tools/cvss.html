@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}CVSS v3.1 评分{% endblock %}
+{% block page_title %}CVSS v3.1 基础评分计算器{% endblock %}
+{% block page_crumb %}工具 / 漏洞等级量化{% endblock %}
+
+{% block content %}
+<div class="layout" style="display:grid;grid-template-columns:1fr 300px;gap:18px">
+  <div class="card">
+    <div class="card-header"><h3>基础指标（Base Metrics）</h3>
+      <button class="btn btn-ghost btn-sm" onclick="setPreset('CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H')">严重示例</button>
+      <button class="btn btn-ghost btn-sm" onclick="setPreset('CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N')">中危示例</button>
+    </div>
+    <div class="card-body">
+      <div class="form-grid" id="metricGrid"></div>
+      <div style="margin:14px 0;padding:11px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid var(--primary,#2563eb);border-radius:8px;font-size:12.5px;color:#475569;line-height:1.9">
+        <b>指标方向说明（越“容易被利用 / 影响越大”，得分越高，符合 FIRST.org CVSS v3.1 规范）：</b><br>
+        · 攻击向量 AV：<b>网络(N) &gt; 邻接(A) &gt; 本地(L) &gt; 物理(P)</b>，远程可达分数更高；<br>
+        · 攻击复杂度 AC：<b>低(L) &gt; 高(H)</b>；用户交互 UI：<b>无需(N) &gt; 需要(R)</b>；<br>
+        · 所需权限 PR：<b>无(N) &gt; 低(L) &gt; 高(H)</b>。这里“高”指<b>攻击者需要具备高权限才能利用</b>，门槛高、更难打，所以分数更低，并非写反；<br>
+        · 机密性/完整性/可用性影响 C/I/A：<b>高(H) &gt; 低(L) &gt; 无(N)</b>；<br>
+        · 影响范围 S=改变(C) 且需要权限时，PR 权重按规范取另一套数值（低=0.68 / 高=0.50），属正常现象。
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input class="input" id="vectorInput" placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" style="flex:1;min-width:280px;font-family:Consolas,monospace;font-size:12.5px">
+        <button class="btn btn-primary" onclick="calcFromVector()">解析向量</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>评分结果</h3></div>
+    <div class="card-body" style="text-align:center">
+      <div id="scoreCircle" style="width:150px;height:150px;border-radius:50%;margin:6px auto 12px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;background:#94a3b8;transition:background .3s">
+        <div style="font-size:40px;font-weight:900;line-height:1" id="scoreNum">-</div>
+        <div style="font-size:12px;opacity:.9;margin-top:3px" id="scoreRating">待计算</div>
+      </div>
+      <div class="kv-row"><div class="k">向量串</div><div class="v" id="resVector" style="font-family:Consolas,monospace;font-size:11px">-</div></div>
+      <div class="kv-row"><div class="k">影响性子分</div><div class="v" id="resImpact">-</div></div>
+      <div class="kv-row"><div class="k">可利用性子分</div><div class="v" id="resExploit">-</div></div>
+      <div class="kv-row"><div class="k">影响范围</div><div class="v" id="resScope">-</div></div>
+      <button class="btn btn-success btn-block" style="margin-top:14px" onclick="useInReport()">将等级用于漏洞报告</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+const METRICS = [
+  {k:"AV", name:"攻击向量", opts:[["N","网络｜可远程利用·分最高"],["A","邻接｜需同一网段"],["L","本地｜需本机执行/登录"],["P","物理｜需接触设备·分最低"]]},
+  {k:"AC", name:"攻击复杂度", opts:[["L","低｜条件简单易复现·分高"],["H","高｜条件苛刻难复现·分低"]]},
+  {k:"PR", name:"所需权限", opts:[["N","无｜未授权匿名可打·分最高"],["L","低｜需普通登录账号"],["H","高｜需管理员权限·分最低"]]},
+  {k:"UI", name:"用户交互", opts:[["N","无需｜受害者零操作·分高"],["R","需要｜需受害者点击·分低"]]},
+  {k:"S", name:"影响范围", opts:[["U","不变｜仅影响本组件"],["C","改变｜可越权影响组件外·显著抬分"]]},
+  {k:"C", name:"机密性影响", opts:[["H","高｜信息完全泄露·分高"],["L","低｜部分泄露"],["N","无｜不影响机密性·分低"]]},
+  {k:"I", name:"完整性影响", opts:[["H","高｜可完全篡改·分高"],["L","低｜部分篡改"],["N","无｜不影响完整性·分低"]]},
+  {k:"A", name:"可用性影响", opts:[["H","高｜服务完全瘫痪·分高"],["L","低｜部分受影响"],["N","无｜不影响可用性·分低"]]},
+];
+// 选中某项时的即时解释（重点标注 PR/AC/UI 等“字面与分数方向相反”的指标）
+const HINTS = {
+  AV:{N:"攻击者可从互联网远程发起，利用门槛最低，权重最高(0.85)。",A:"需与目标处于同一网络（同网段/蓝牙等），权重0.62。",L:"需先在目标本机执行代码或本地登录，权重0.55。",P:"需物理接触设备才能利用，权重最低(0.20)。"},
+  AC:{L:"攻击条件容易满足、可稳定复现，权重0.77，分更高。",H:"需特殊/苛刻条件、依赖竞争或特定配置、难稳定复现，权重0.44，分更低。"},
+  PR:{N:"无需任何登录、未授权即可利用——最危险，权重0.85，分最高。",L:"攻击者需先拥有普通账号登录，S不变时权重0.62。",H:"指攻击者需先具备管理员等高权限才能利用，门槛最高、能打的人极少，S不变时权重仅0.27，故分更低（这不是说危害小，而是利用前提苛刻，方向并未写反）。"},
+  UI:{N:"无需受害者做任何操作即可触发，权重0.85。",R:"需要受害者点击链接/打开文件等配合，权重0.62，分更低。"},
+  S:{U:"漏洞影响仅限脆弱组件自身的安全边界。",C:"漏洞可突破边界、影响其他组件/提权到宿主，分数会被显著放大（×1.08，且 PR 改用 0.85/0.68/0.50 权重）。"},
+  C:{H:"可读取大量敏感信息(影响系数0.56)。",L:"仅泄露少量/受限信息(0.22)。",N:"无机密信息泄露(0)。"},
+  I:{H:"可任意篡改数据/写入(0.56)。",L:"仅能有限篡改(0.22)。",N:"无完整性影响(0)。"},
+  A:{H:"可导致服务完全中断/崩溃(0.56)。",L:"仅造成有限中断或性能下降(0.22)。",N:"无可用性影响(0)。"}
+};
+const DEFAULTS = {AV:"N",AC:"L",PR:"N",UI:"N",S:"U",C:"H",I:"H",A:"H"};
+const COLORS = {Critical:"#dc2626",High:"#ea580c",Medium:"#ca8a04",Low:"#16a34a",None:"#94a3b8"};
+
+function buildGrid() {
+  const grid = document.getElementById("metricGrid");
+  grid.innerHTML = METRICS.map(m => `
+    <div class="form-item"><label>${m.name}（${m.k}）</label>
+      <select class="select cvss-sel" data-k="${m.k}">
+        ${m.opts.map(o => `<option value="${o[0]}" ${DEFAULTS[m.k]===o[0]?"selected":""}>${o[1]}</option>`).join("")}
+      </select>
+      <div class="mhint" id="hint_${m.k}" style="margin-top:5px;font-size:11.5px;color:#64748b;line-height:1.5"></div>
+      </div>`).join("");
+  grid.querySelectorAll(".cvss-sel").forEach(s => s.addEventListener("change", calc));
+}
+function updateHints() {
+  METRICS.forEach(m => {
+    const v = document.querySelector(`.cvss-sel[data-k="${m.k}"]`).value;
+    const el = document.getElementById("hint_" + m.k);
+    if (el) { el.textContent = HINTS[m.k][v] || ""; el.style.color = (m.k==="PR"||m.k==="AC") ? "#b45309" : "#64748b"; }
+  });
+}
+function currentVector() {
+  const parts = METRICS.map(m => m.k + ":" + document.querySelector(`.cvss-sel[data-k="${m.k}"]`).value);
+  return "CVSS:3.1/" + parts.join("/");
+}
+async function calc() {
+  const v = currentVector();
+  document.getElementById("vectorInput").value = v;
+  const r = await ZhiShield.api("/api/tools/cvss", { method:"POST", json:{ vector: v } });
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  render(r.data); updateHints();
+}
+async function calcFromVector() {
+  const v = document.getElementById("vectorInput").value.trim();
+  const r = await ZhiShield.api("/api/tools/cvss", { method: "POST", json: { vector: v } });
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  r.data.vector.split("/").slice(1).forEach(p => {
+    const [k, val] = p.split(":");
+    const sel = document.querySelector(`.cvss-sel[data-k="${k}"]`);
+    if (sel) sel.value = val;
+  });
+  render(r.data); updateHints();
+}
+function setPreset(v) { document.getElementById("vectorInput").value=v; calcFromVector(); }
+function render(d) {
+  document.getElementById("scoreNum").textContent = d.base_score.toFixed(1);
+  document.getElementById("scoreRating").textContent = d.rating_cn + " / " + d.rating;
+  document.getElementById("scoreCircle").style.background = COLORS[d.rating] || "#94a3b8";
+  document.getElementById("resVector").textContent = d.vector;
+  document.getElementById("resImpact").textContent = d.impact_subscore;
+  document.getElementById("resExploit").textContent = d.exploitability_subscore;
+  document.getElementById("resScope").textContent = d.scope_changed ? "改变（Changed）" : "不变（Unchanged）";
+  window._lastResult = d;
+}
+function useInReport() {
+  if (!window._lastResult) { ZhiShield.error("请先完成评分"); return; }
+  const map = {Critical:"critical",High:"high",Medium:"medium",Low:"low",None:"unknown"};
+  const sev = map[window._lastResult.rating];
+  navigator.clipboard.writeText(window._lastResult.vector).then(()=>{
+    ZhiShield.success(`向量已复制，等级：${window._lastResult.rating_cn}（可在报告中选用 ${sev}）`);
+  }).catch(()=>ZhiShield.info(`等级：${window._lastResult.rating_cn}`));
+}
+buildGrid();
+calc();
+</script>
+{% endblock %}

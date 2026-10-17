@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}提取域名/IP{% endblock %}
+{% block page_title %}提取域名 / IP{% endblock %}
+{% block page_crumb %}工具 / 资产整理{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <div class="form-item"><label>输入文本（每行一个 URL / 域名 / IP:端口）</label>
+      <textarea class="textarea" id="urlText" rows="10" placeholder="https://www.example.com/path&#10;http://192.168.1.1:8080/admin&#10;sub.example.com:443"></textarea>
+    </div>
+    <button class="btn btn-primary" style="margin:14px 0" onclick="doUrls()">提取</button>
+    <div id="urlResult"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+async function doUrls() {
+  const r = await ZhiShield.api("/api/tools/urls", { json: { text: document.getElementById("urlText").value } });
+  const box = document.getElementById("urlResult");
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  if (!r.data.length) { box.innerHTML = `<div style="color:#94a3b8;font-size:13px">无有效输入</div>`; return; }
+  let html = `<table class="data-table"><thead><tr><th>原始输入</th><th>主域名 / IP</th></tr></thead><tbody>`;
+  r.data.forEach(x => {
+    let cell;
+    if (x.multi && (x.result || "").indexOf("、") !== -1) {
+      const tags = x.result.split("、").map(v =>
+        `<span style="display:inline-block;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:6px;padding:2px 9px;margin:2px 4px 2px 0;font-size:12.5px;font-weight:700">${ZhiShield.esc(v)}</span>`).join("");
+      cell = `<div>${tags}<div style="font-size:11.5px;color:#94a3b8;margin-top:3px">本行自动识别出 ${x.result.split("、").length} 个资产</div></div>`;
+    } else if ((x.result || "").startsWith("无法识别")) {
+      cell = `<span style="color:#dc2626">${ZhiShield.esc(x.result)}</span>`;
+    } else {
+      cell = `<span style="font-weight:700;color:var(--primary)">${ZhiShield.esc(x.result)}</span>`;
+    }
+    html += `<tr><td style="color:#64748b;max-width:46%">${ZhiShield.esc(x.input)}</td><td>${cell}</td></tr>`;
+  });
+  box.innerHTML = html + "</tbody></table>";
+}
+</script>
+{% endblock %}

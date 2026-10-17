@@ -1,0 +1,503 @@
+{% extends "base.html" %}
+{% block title %}系统设置{% endblock %}
+{% block page_title %}系统设置{% endblock %}
+{% block page_crumb %}系统 / 外观 · AI · 数据{% endblock %}
+
+{% block head %}
+<style>
+  /* 模型勾选列表 */
+  .ai-model-item{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid #e2e8f0;
+    border-radius:8px;font-size:12.5px;color:#475569;background:#fff;cursor:pointer;user-select:none}
+  .ai-model-item:hover{border-color:#93c5fd;background:#f8fbff}
+  .ai-model-item.on{border-color:#2563eb;background:#eff6ff;color:#1d4ed8;font-weight:600}
+  .ai-model-item input{margin:0;cursor:pointer}
+  .ai-model-empty{font-size:12.5px;color:#94a3b8}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="layout" style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+  <div class="card">
+    <div class="card-header"><h3>🖼 外观与界面</h3><span style="font-size:12px;color:#94a3b8">自定义背景图片 · 主题色 · 标题</span></div>
+    <div class="card-body">
+      <div class="settings-section">
+        <h4>系统标题</h4>
+        <div class="form-grid">
+          <div class="form-item"><label>主标题</label><input class="input" id="sTitle" placeholder="智安鉴"></div>
+          <div class="form-item"><label>副标题</label><input class="input" id="sSubtitle" placeholder="智能安全检测与漏洞报告系统"></div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h4>主题色</h4>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap" id="themePicker"></div>
+      </div>
+      <div class="settings-section">
+        <h4>自定义背景图</h4>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <input type="file" id="bgFile" accept="image/*" class="input" style="flex:1;min-width:200px">
+          <button class="btn btn-primary" onclick="uploadBg()">上传并应用</button>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap" id="bgList"></div>
+      </div>
+      <div class="settings-section">
+        <h4>背景效果</h4>
+        <div class="range-row" style="margin-bottom:10px">
+          <span style="width:70px;font-size:13px">遮罩强度</span>
+          <input type="range" id="bgOverlay" min="0" max="90" value="35" oninput="document.getElementById('ovVal').textContent=(this.value/100).toFixed(2)">
+          <span class="val" id="ovVal">0.35</span>
+        </div>
+        <div class="range-row">
+          <span style="width:70px;font-size:13px">背景模糊</span>
+          <input type="range" id="bgBlur" min="0" max="30" value="0" oninput="document.getElementById('blVal').textContent=this.value+'px'">
+          <span class="val" id="blVal">0px</span>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h4>报告落款</h4>
+        <div class="form-grid">
+          <div class="form-item"><label>报告页眉标题</label><input class="input" id="sReportHeader" placeholder="网络安全测试报告"></div>
+          <div class="form-item"><label>落款单位</label><input class="input" id="sExportOrg" placeholder="如：XX 网络安全测评中心"></div>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveAppearance()">保存外观设置</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-header"><h3>🤖 AI 接口配置</h3><span style="font-size:12px;color:#94a3b8" id="aiStatus"></span></div>
+      <div class="card-body">
+        <div class="form-grid">
+          <div class="form-item full"><label>API Key（仅保存在本机 config.json）</label><input class="input" id="sAiKey" type="password" placeholder="sk-..."></div>
+          <div class="form-item"><label>Base URL</label><input class="input" id="sAiBase" placeholder="https://api.stepfun.com/v1"></div>
+          <div class="form-item"><label>超时（秒）</label><input class="input" id="sAiTimeout" type="number" value="120"></div>
+          <div class="form-item full">
+            <label>模型 <span style="font-weight:400;color:#94a3b8;font-size:12px">从上游获取后勾选，无需手填</span></label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input class="input" id="sAiModel" readonly placeholder="点「从上游获取模型」后勾选"
+                     style="flex:1;min-width:200px;background:#f8fafc">
+              <button class="btn btn-ghost btn-sm" onclick="fetchAiModels()">⬇ 从上游获取模型</button>
+              <button class="btn btn-ghost btn-sm" id="aiModelManualBtn" onclick="toggleManualModel()">手动填写</button>
+            </div>
+            <div id="aiModelList" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px"></div>
+            <div id="aiModelTip" style="margin-top:6px;font-size:12px;color:#94a3b8">读取中…</div>
+          </div>
+          <div class="form-item full"><label>网络代理（可选）<span style="font-weight:400;color:#ef4444;font-size:12px"> 校园网/酒店等需网页认证，或接口被网络拦截时填写</span></label>
+            <input class="input" id="sAiProxy" placeholder="留空直连；例如 http://127.0.0.1:7897（Clash）、http://127.0.0.1:7890"></div>
+        </div>
+        <div style="margin:10px 0;font-size:12.5px;color:#64748b;line-height:1.9">
+          常用接入：DeepSeek（api.deepseek.com/v1）、阶跃星辰（api.stepfun.com/v1）、
+          通义千问（dashscope.aliyuncs.com/compatible-mode/v1）、
+          OpenAI（api.openai.com/v1）、本地 Ollama（localhost:11434/v1）。
+          <br>模型不用记名字：填好 Base URL 与 API Key 后点「⬇ 从上游获取模型」，在列表里勾选一个即可
+          （打开本页时会自动拉取一次；上游返回不了列表时，可点「手动填写」）。
+          <br>连不上时：①确认当前网络已完成网页认证，或直接换手机热点；②开启本机代理软件后，在上方填写代理地址再“测试连接”。
+        </div>
+        <div class="settings-section" style="border-top:1px dashed #e2e8f0;margin-top:14px;padding-top:12px">
+          <h4>统一 AI 配置 <span style="font-weight:400;font-size:12px;color:#94a3b8">智安鉴与 Shelling 共用这一份模型配置</span></h4>
+          <div id="aiUnifiedBox" style="font-size:12.5px;color:#64748b;line-height:1.9;margin-bottom:8px">读取中…</div>
+          <button class="btn btn-ghost" onclick="syncAiToShelling()">同步到 Shelling</button>
+          <div style="margin-top:8px;font-size:12px;color:#94a3b8;line-height:1.8">
+            智安鉴的 Base URL / 模型 / API Key 是全系统唯一配置源。保存时自动同步给 Shelling，
+            使 Shelling 扫描同样具备 AI 分析（漏洞摘要、AI 分析、整改建议、误报评分）。<br>
+            注意：上方「网络代理」只对智安鉴生效，Shelling 侧不支持代理。
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="saveAi()" style="margin-top:10px">保存 AI 配置</button>
+        <button class="btn btn-ghost" onclick="testAi()" style="margin-left:8px;margin-top:10px">测试连接</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3>🗄 数据管理</h3></div>
+      <div class="card-body">
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-success" onclick="seedDemo()">导入演示数据</button>
+          <button class="btn btn-danger" onclick="clearData()">清空全部业务数据</button>
+          <button class="btn btn-ghost" onclick="openDataDir()">📂 打开数据目录</button>
+          <button class="btn btn-ghost" onclick="copyDataPath()">复制路径</button>
+        </div>
+        <div style="margin-top:12px">
+          <div style="font-size:12px;color:#94a3b8;margin-bottom:4px">数据目录绝对路径（打不开时可复制，粘贴到任意资源管理器地址栏回车）：</div>
+          <input class="input" id="dataPathBox" readonly style="font-family:Consolas,monospace;font-size:12px;background:#f8fafc" value="读取中…">
+        </div>
+        <div style="margin-top:10px;font-size:12.5px;color:#64748b">
+          数据库与导出文件均保存在工具目录 data/ 下，本地运行，数据不出本机。点击“打开数据目录”后若窗口没有弹到最前面，请查看任务栏的文件夹图标。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+let themeColors = ["#2563eb", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#0f172a"];
+
+async function loadAppearance() {
+  const r = await ZhiShield.api("/api/settings/appearance");
+  if (r.code !== 0) return;
+  const d = r.data;
+  document.getElementById("sTitle").value = d.app_title || "";
+  document.getElementById("sSubtitle").value = d.app_subtitle || "";
+  document.getElementById("sReportHeader").value = d.report_header || "";
+  document.getElementById("sExportOrg").value = d.export_org || "";
+  document.getElementById("bgOverlay").value = Math.round((d.background_overlay || 0.35) * 100);
+  document.getElementById("ovVal").textContent = (d.background_overlay || 0.35).toFixed(2);
+  document.getElementById("bgBlur").value = d.background_blur || 0;
+  document.getElementById("blVal").textContent = (d.background_blur || 0) + "px";
+
+  const picker = document.getElementById("themePicker");
+  picker.innerHTML = themeColors.map(c =>
+    `<div onclick="pickColor('${c}')" data-c="${c}" style="width:30px;height:30px;border-radius:9px;background:${c};cursor:pointer;border:3px solid ${c === d.theme_color ? "#fff" : "transparent"};box-shadow:${c === d.theme_color ? "0 0 0 2px " + c : "none"}" title="${c}"></div>`).join("");
+
+  const bgList = document.getElementById("bgList");
+  bgList.innerHTML = "";
+  // 默认渐变选项
+  bgList.innerHTML += `<div class="bg-thumb ${!d.background ? "selected" : ""}" data-name="" style="background:linear-gradient(135deg,#0f172a,#1e293b,#172554);display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:11px" onclick="pickBg('')">默认<br>渐变</div>`;
+  (d.backgrounds || []).forEach(b => {
+    const sel = b === d.background ? "selected" : "";
+    bgList.innerHTML += `<div style="position:relative">
+      <img src="/media/backgrounds/${encodeURIComponent(b)}" class="bg-thumb ${sel}" data-name="${b}" onclick="pickBg('${b}')">
+      <button onclick="delBg('${b}')" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:#ef4444;color:#fff;border:none;cursor:pointer;font-size:11px;line-height:1">×</button>
+    </div>`;
+  });
+}
+
+function pickColor(c) {
+  document.querySelectorAll("#themePicker div[data-c]").forEach(el => {
+    const on = el.dataset.c === c;
+    el.style.borderColor = on ? "#fff" : "transparent";
+    el.style.boxShadow = on ? "0 0 0 2px " + c : "none";
+  });
+  window._themeColor = c;
+}
+
+function pickBg(name) {
+  document.querySelectorAll(".bg-thumb").forEach(t => t.classList.remove("selected"));
+  document.querySelectorAll(`.bg-thumb[data-name="${name}"]`).forEach(t => t.classList.add("selected"));
+  window._bgName = name;
+}
+
+async function saveAppearance() {
+  const r = await ZhiShield.api("/api/settings/appearance", { json: {
+    app_title: document.getElementById("sTitle").value.trim(),
+    app_subtitle: document.getElementById("sSubtitle").value.trim(),
+    theme_color: window._themeColor || document.querySelector("#themePicker div[data-c]").dataset.c,
+    background: window._bgName || "",
+    background_overlay: parseInt(document.getElementById("bgOverlay").value) / 100,
+    background_blur: parseInt(document.getElementById("bgBlur").value),
+    report_header: document.getElementById("sReportHeader").value.trim(),
+    export_org: document.getElementById("sExportOrg").value.trim(),
+  }});
+  if (r.code === 0) { ZhiShield.success("外观已保存，正在刷新..."); setTimeout(() => location.reload(), 600); }
+  else ZhiShield.error(r.msg);
+}
+
+async function uploadBg() {
+  const f = document.getElementById("bgFile").files[0];
+  if (!f) { ZhiShield.error("请选择背景图片"); return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  const r = await ZhiShield.api("/api/settings/background/upload", { method: "POST", body: fd });
+  if (r.code === 0) { ZhiShield.success(r.msg); setTimeout(() => location.reload(), 500); }
+  else ZhiShield.error(r.msg);
+}
+
+async function delBg(name) {
+  ZhiShield.confirmDialog("确定删除该背景图？", async () => {
+    const r = await ZhiShield.api("/api/settings/background/delete", { json: { name } });
+    if (r.code === 0) { ZhiShield.success("已删除"); loadAppearance(); } else ZhiShield.error(r.msg);
+  }, "删除");
+}
+
+async function loadAi() {
+  const r = await ZhiShield.api("/api/settings/ai");
+  if (r.code !== 0) return;
+  const d = r.data;
+  if (d.api_key) document.getElementById("sAiKey").value = d.api_key;
+  document.getElementById("sAiBase").value = d.base_url || "";
+  document.getElementById("sAiModel").value = d.model || "";
+  document.getElementById("sAiTimeout").value = d.timeout || 120;
+  document.getElementById("sAiProxy").value = d.proxy || "";
+  document.getElementById("aiStatus").textContent = d.api_key ? "已配置" : "未配置";
+  renderAiModels(d.model || "");
+  // 已配置时自动从上游拉一次模型列表，省得每次手点
+  if (d.api_key && d.base_url) fetchAiModels(true);
+}
+
+/* ---------- 模型：从上游获取 + 勾选 ---------- */
+let aiModelOptions = [];   // 最近一次从上游拿到的模型列表
+
+/* 渲染勾选列表；selected 省略时取当前输入框里的值 */
+function renderAiModels(selected) {
+  const box = document.getElementById("aiModelList");
+  if (!box) return;
+  const cur = (selected === undefined ? document.getElementById("sAiModel").value : selected) || "";
+  // 已保存的模型若不在上游列表里，也一并列出并标注，避免配置“凭空消失”
+  const list = aiModelOptions.slice();
+  if (cur && !list.includes(cur)) list.unshift(cur);
+
+  box.innerHTML = "";
+  list.forEach(name => {
+    const lab = document.createElement("label");
+    lab.className = "ai-model-item" + (name === cur ? " on" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = (name === cur);
+    cb.dataset.model = name;
+    cb.addEventListener("change", () => pickAiModel(name, cb.checked));
+    const span = document.createElement("span");
+    span.textContent = name;
+    lab.appendChild(cb);
+    lab.appendChild(span);
+    if (name === cur && !aiModelOptions.includes(name)) {
+      const em = document.createElement("span");
+      em.style.cssText = "color:#94a3b8;font-size:12px";
+      em.textContent = "（已保存，上游未返回）";
+      lab.appendChild(em);
+    }
+    box.appendChild(lab);
+  });
+  syncAiModelSelection();
+}
+
+/* 按当前选用值同步勾选态、高亮与提示文案（原地更新，不重建 DOM） */
+function syncAiModelSelection() {
+  const cur = document.getElementById("sAiModel").value || "";
+  document.querySelectorAll("#aiModelList .ai-model-item").forEach(lab => {
+    const cb = lab.querySelector("input");
+    const on = !!cb && cb.dataset.model === cur;
+    if (cb) cb.checked = on;
+    lab.classList.toggle("on", on);
+  });
+  const tip = document.getElementById("aiModelTip");
+  if (!tip) return;
+  if (!aiModelOptions.length && !cur) {
+    tip.innerHTML = '<span style="color:#f59e0b">尚未获取到模型列表</span>：填好 API Key 与 Base URL 后点「⬇ 从上游获取模型」';
+  } else if (!aiModelOptions.length) {
+    tip.innerHTML = `当前模型 <b>${ZhiShield.esc(cur)}</b>（上游未返回列表，可点「手动填写」或「⬇ 从上游获取模型」重试）`;
+  } else {
+    tip.innerHTML = `已从上游获取 <b>${aiModelOptions.length}</b> 个模型` +
+      (cur ? `，当前选用 <b>${ZhiShield.esc(cur)}</b>` : "，请勾选一个");
+  }
+}
+
+/* 勾选即选用（全系统只用一个模型，勾一个自动取消其他） */
+function pickAiModel(name, checked) {
+  const hidden = document.getElementById("sAiModel");
+  if (!checked && hidden.value === name) {
+    hidden.value = "";
+    syncAiModelSelection();
+    ZhiShield.info("已取消选择，保存后将不指定模型");
+    return;
+  }
+  if (checked) {
+    hidden.value = name;
+    ZhiShield.info(`已选用模型：${name} —— 点「保存 AI 配置」生效`);
+  }
+  syncAiModelSelection();
+}
+
+/* 从上游（GET {base_url}/models）拉取模型列表；silent=true 时失败不弹错误提示 */
+async function fetchAiModels(silent) {
+  const key = document.getElementById("sAiKey").value.trim();
+  const tip = document.getElementById("aiModelTip");
+  if (!key) {
+    if (tip) tip.innerHTML = '<span style="color:#f59e0b">请先填写 API Key</span>，再点「⬇ 从上游获取模型」';
+    if (!silent) ZhiShield.error("请先填写 API Key");
+    return;
+  }
+  if (tip) tip.innerHTML = '<span class="spinner" style="width:12px;height:12px;display:inline-block;vertical-align:-2px"></span> 正在从上游获取模型列表…';
+  let r;
+  try {
+    r = await ZhiShield.api("/api/ai/ping", { json: {
+      api_key: key,
+      base_url: document.getElementById("sAiBase").value.trim(),
+      proxy: document.getElementById("sAiProxy").value.trim(),
+    }});
+  } catch (e) {
+    aiModelOptions = [];
+    renderAiModels();
+    if (tip) tip.innerHTML = `<span style="color:#ef4444">获取失败</span>：${ZhiShield.esc(e.message || "请求异常")}`;
+    if (!silent) ZhiShield.error("获取模型列表失败：" + (e.message || "请求异常"));
+    return;
+  }
+  if (r && r.code === 0 && r.data && Array.isArray(r.data.models) && r.data.models.length) {
+    aiModelOptions = r.data.models;
+    renderAiModels();
+    if (!silent) ZhiShield.success(`已获取 ${aiModelOptions.length} 个模型，勾选一个即可`);
+  } else {
+    aiModelOptions = [];
+    renderAiModels();
+    const msg = (r && r.msg) || "上游未返回模型列表";
+    if (tip) tip.innerHTML = `<span style="color:#f59e0b">获取失败</span>：${ZhiShield.esc(msg)}`;
+    if (!silent) ZhiShield.error(msg);
+  }
+}
+
+/* 上游拿不到列表时的兜底：解锁输入框手动填写 */
+function toggleManualModel() {
+  const box = document.getElementById("sAiModel");
+  const btn = document.getElementById("aiModelManualBtn");
+  const on = box.hasAttribute("readonly");
+  if (on) {
+    box.removeAttribute("readonly");
+    box.style.background = "#fff";
+    box.focus();
+    if (btn) btn.textContent = "改用勾选";
+    ZhiShield.info("已解锁输入框，可直接填写模型名");
+  } else {
+    box.setAttribute("readonly", "readonly");
+    box.style.background = "#f8fafc";
+    if (btn) btn.textContent = "手动填写";
+    renderAiModels();
+  }
+}
+
+async function saveAi() {
+  const r = await ZhiShield.api("/api/settings/ai", { json: {
+    api_key: document.getElementById("sAiKey").value.trim(),
+    base_url: document.getElementById("sAiBase").value.trim(),
+    model: document.getElementById("sAiModel").value.trim(),
+    proxy: document.getElementById("sAiProxy").value.trim(),
+    timeout: parseInt(document.getElementById("sAiTimeout").value) || 120,
+  }});
+  if (r.code === 0) { ZhiShield.success(r.msg || "AI 配置已保存"); loadAi(); loadAiUnified(); }
+  else ZhiShield.error(r.msg);
+}
+
+async function testAi() {
+  const key = document.getElementById("sAiKey").value.trim();
+  if (!key) { ZhiShield.error("请先填写 API Key"); return; }
+  const btn = event && event.target; const old = btn ? btn.innerHTML : "";
+  if (btn) { btn.disabled = true; btn.innerHTML = "测试中..."; }
+  ZhiShield.info("正在测试连接...");
+  try {
+    const r = await ZhiShield.api("/api/ai/ping", { json: {
+      api_key: key,
+      base_url: document.getElementById("sAiBase").value.trim(),
+      model: document.getElementById("sAiModel").value.trim(),
+      proxy: document.getElementById("sAiProxy").value.trim(),
+    }});
+    if (r.code === 0) {
+      const d = r.data || {};
+      // 测试连接会一并返回上游模型列表，顺手刷新勾选项
+      if (Array.isArray(d.models) && d.models.length) { aiModelOptions = d.models; renderAiModels(); }
+      const modelTip = d.current_model
+        ? (d.current_online ? `，当前模型「${d.current_model}」可用 ✔` : `，但当前模型「${d.current_model}」不在可用列表，请核对模型名`)
+        : "";
+      ZhiShield.success(`连接正常（${d.latency_ms} ms），共 ${d.model_count} 个可用模型${modelTip}`);
+    } else ZhiShield.error("连接失败：" + r.msg);
+  } catch (e) { ZhiShield.error("连接失败：" + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = old; } }
+}
+
+/* ---------- 统一 AI 配置：Shelling 侧状态与同步 ---------- */
+async function loadAiUnified() {
+  const box = document.getElementById("aiUnifiedBox");
+  if (!box) return;
+  let r;
+  try { r = await ZhiShield.api("/api/settings/ai/shelling"); }
+  catch (e) { box.textContent = "读取 Shelling 状态失败：" + e.message; return; }
+  if (!r || r.code !== 0) { box.textContent = "读取 Shelling 状态失败"; return; }
+  const d = r.data || {};
+  if (!d.reachable) {
+    box.innerHTML = `<span style="color:#f59e0b">⚠ 未能连接扫描引擎</span>
+      <br><span style="font-size:12px">${ZhiShield.esc(d.error || "")}</span>
+      <br>扫描引擎地址已内置在代码中（http://host.docker.internal:8000），持续失败请检查宿主机 8000 端口。`;
+    return;
+  }
+  const synced = d.synced, main = d.active_main, sub = d.active_sub;
+  let html = `Shelling 侧现有 <b>${d.total}</b> 个 LLM 配置。`;
+  if (synced) {
+    const okMain = main && main.id === synced.id;
+    const okSub = sub && sub.id === synced.id;
+    const keyTip = synced.has_api_key ? "" : "，<span style=\"color:#ef4444\">缺少 API Key</span>";
+    html += `<br><span style="color:#16a34a">✔ 已统一</span>：配置「${ZhiShield.esc(synced.name)}」，
+      模型 <b>${ZhiShield.esc(synced.model)}</b>（${ZhiShield.esc(synced.provider || "")}）${keyTip}`;
+    html += `<br>主 Agent：${okMain ? "✔ 使用该配置" : "✘ 未生效（当前：" + ZhiShield.esc(main ? main.name : "无") + "）"}`;
+    html += `　子 Agent：${okSub ? "✔ 使用该配置" : "✘ 未生效（当前：" + ZhiShield.esc(sub ? sub.name : "无") + "）"}`;
+  } else if (!d.total) {
+    html += `<br><span style="color:#f59e0b">⚠ Shelling 侧未配置 LLM</span>，
+      扫描会跳过 AI 分析（漏洞仍会被扫描出来，但没有 AI 摘要与分析）。<br>
+      填好上方 API Key 后点「同步到 Shelling」即可统一。`;
+  } else {
+    const cur = (main || sub || {}).name || "未知";
+    html += `<br><span style="color:#f59e0b">⚠ 尚未统一</span>：Shelling 当前生效的是「${ZhiShield.esc(cur)}」，
+      与智安鉴不是同一份配置。<br>点「同步到 Shelling」改为统一使用智安鉴的配置。`;
+  }
+  box.innerHTML = html;
+}
+
+async function syncAiToShelling() {
+  const key = document.getElementById("sAiKey").value.trim();
+  if (!key) { ZhiShield.error("请先填写 AI API Key —— Shelling 侧需要可用的 Key 才能真正启用 AI 分析"); return; }
+  const btn = event && event.target; const old = btn ? btn.innerHTML : "";
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:14px;height:14px"></span> 同步中...'; }
+  ZhiShield.info("正在同步 AI 配置到 Shelling 并实测调用...");
+  try {
+    const r = await ZhiShield.api("/api/settings/ai/sync", { json: {
+      api_key: key,
+      base_url: document.getElementById("sAiBase").value.trim(),
+      model: document.getElementById("sAiModel").value.trim(),
+    }});
+    if (r.code === 0) ZhiShield.success(r.msg); else ZhiShield.error(r.msg);
+  } catch (e) { ZhiShield.error("同步失败：" + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = old; } }
+  loadAiUnified();
+}
+
+async function seedDemo() {
+  ZhiShield.confirmDialog("导入演示数据（测试单位/域名/漏洞）？可随时在设置页清空。", async () => {
+    const r = await ZhiShield.api("/api/settings/seed-demo", { method: "POST", json: {} });
+    if (r.code === 0) { ZhiShield.success(r.msg); setTimeout(() => location.reload(), 600); } else ZhiShield.error(r.msg);
+  }, "导入", false);
+}
+
+function clearData() {
+  ZhiShield.confirmDialog("将清空全部单位、域名、漏洞、报告数据！此操作不可恢复，确定继续？", async () => {
+    const r = await ZhiShield.api("/api/settings/clear-data", { method: "POST", json: {} });
+    if (r.code === 0) { ZhiShield.success(r.msg); setTimeout(() => location.reload(), 600); } else ZhiShield.error(r.msg);
+  }, "清空");
+}
+
+async function openDataDir() {
+  try {
+    const r = await ZhiShield.api("/api/settings/open-data-dir", { method: "POST", json: {} });
+    if (r.code === 0) {
+      if (r.path) { document.getElementById("dataPathBox").value = r.path; console.info("数据目录：", r.path); }
+      ZhiShield.success(r.msg || "已在文件管理器打开数据目录");
+    } else {
+      ZhiShield.error(r.msg || "打开失败");
+    }
+  } catch (e) {
+    ZhiShield.error("打开数据目录失败：" + e.message);
+  }
+}
+
+async function loadDataPath() {
+  try {
+    const r = await ZhiShield.api("/api/settings/data-path");
+    if (r.code === 0) document.getElementById("dataPathBox").value = r.path;
+  } catch (e) {}
+}
+
+function copyDataPath() {
+  const box = document.getElementById("dataPathBox");
+  const p = (box.value || "").trim();
+  if (!p || p === "读取中…") { ZhiShield.error("路径尚未就绪"); return; }
+  box.select(); box.setSelectionRange(0, 99999);
+  navigator.clipboard.writeText(p).then(
+    () => ZhiShield.success("数据目录路径已复制，可粘贴到资源管理器地址栏"),
+    () => { try { document.execCommand("copy"); ZhiShield.success("路径已复制"); } catch (e) { ZhiShield.info(p); } }
+  );
+}
+
+loadDataPath();
+
+loadAppearance();
+loadAi();
+loadAiUnified();
+</script>
+{% endblock %}

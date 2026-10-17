@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ APP_TITLE }}{% endblock %} · {{ APP_NAME }}</title>
+<link rel="stylesheet" href="/static/css/style.css?v=20260917a">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%232563eb'/><path d='M12 5l6 2.5v4c0 3.5-2.5 6-6 7.5-3.5-1.5-6-4-6-7.5v-4L12 5z' fill='white'/><path d='M9 12.5l2 2 4-4' stroke='%232563eb' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+:root { --primary: {{ THEME_COLOR }}; }
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+<!-- 背景层 -->
+<div class="bg-layer {% if BG_IMAGE %}has-image{% endif %}"
+     style="--bg-url: url('/media/backgrounds/{{ BG_IMAGE }}'); --bg-overlay: {{ BG_OVERLAY }}; --bg-blur: {{ BG_BLUR }}px;">
+  <div class="bg-overlay"></div>
+</div>
+
+<div class="layout">
+  <!-- 侧栏 -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">{{ APP_NAME }}</div>
+        <div class="brand-sub">智能安全检测与漏洞报告系统</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-group">
+        <a class="nav-item {% if active == 'index' %}active{% endif %}" href="/">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          仪表盘
+        </a>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title">业务管理</div>
+        <div class="nav-item {% if active in ('units','tags') %}active{% endif %} has-sub open">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          单位管理
+          <svg class="nav-toggle-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        </div>
+        <div class="nav-sub open">
+          <a class="nav-item {% if active == 'units' %}active{% endif %}" href="/units">单位列表</a>
+          <a class="nav-item {% if active == 'tags' %}active{% endif %}" href="/tags">单位标签</a>
+        </div>
+
+        <a class="nav-item {% if active == 'domains' %}active{% endif %}" href="/domains">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg>
+          域名资产
+        </a>
+
+        <a class="nav-item {% if active == 'vulnerabilities' %}active{% endif %}" href="/vulnerabilities">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>
+          漏洞库
+        </a>
+
+        <a class="nav-item {% if active == 'scanner' %}active{% endif %}" href="/scanner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><circle cx="12" cy="12" r="3.5"/><path d="M12 8.5V12l2.5 1.5"/></svg>
+          AI 漏洞扫描
+        </a>
+
+        <a class="nav-item {% if active == 'reports' %}active{% endif %}" href="/reports">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2"/></svg>
+          报告管理
+        </a>
+
+        <a class="nav-item {% if active == 'report_ai' %}active{% endif %}" href="/reports/ai">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6M9 13h6M9 17h3"/><path d="M9 9l6 6M15 9l-6 6" stroke-linecap="round" opacity=".5"/></svg>
+          AI 智能生成
+        </a>
+
+        <a class="nav-item {% if active == 'assistant' %}active{% endif %}" href="/assistant">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01" stroke-linecap="round"/></svg>
+          AI 安全助手
+        </a>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-title">工具箱</div>
+        <div class="nav-item has-sub {% if active and active.startswith('tools') %}active open{% endif %}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+          工具管理
+          <svg class="nav-toggle-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        </div>
+        <div class="nav-sub {% if active and active.startswith('tools') %}open{% endif %}">
+          <a class="nav-item {% if active == 'tools-password' %}active{% endif %}" href="/tools/password">随机密码生成</a>
+          <a class="nav-item {% if active == 'tools-dedup' %}active{% endif %}" href="/tools/dedup">文本去重</a>
+          <a class="nav-item {% if active == 'tools-urls' %}active{% endif %}" href="/tools/urls">提取域名/IP</a>
+          <a class="nav-item {% if active == 'tools-compare' %}active{% endif %}" href="/tools/compare">A/B 文件对比</a>
+          <a class="nav-item {% if active == 'tools-classify' %}active{% endif %}" href="/tools/classify">资产分类</a>
+          <a class="nav-item {% if active == 'tools-cvss' %}active{% endif %}" href="/tools/cvss">CVSS 评分计算</a>
+        </div>
+      </div>
+
+      <div class="nav-group">
+        {% if CURRENT_USER and CURRENT_USER.role == 'admin' %}
+        <a class="nav-item {% if active == 'users' %}active{% endif %}" href="/users">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.6"/><path d="M3.5 20a5.5 5.5 0 0111 0"/><path d="M17.5 11v4M15.5 13h4" stroke-linecap="round"/></svg>
+          用户管理
+        </a>
+        {% endif %}
+        <a class="nav-item {% if active == 'settings' %}active{% endif %}" href="/settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          系统设置
+        </a>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      {{ APP_NAME }} v{{ APP_VERSION }}<br>
+      本地安全工具 · 数据不出本机
+    </div>
+  </aside>
+
+  <!-- 主区域 -->
+  <div class="main">
+    <header class="topbar">
+      <button class="btn btn-ghost btn-sm menu-toggle" style="display:none">☰</button>
+      <div>
+        <span class="page-title">{% block page_title %}{% endblock %}</span>
+        <span class="page-crumb">{% block page_crumb %}{% endblock %}</span>
+      </div>
+      <div class="topbar-right">
+        <a class="btn btn-primary btn-sm" href="/reports/ai" style="background:linear-gradient(135deg,var(--primary),#7c3aed)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/></svg>
+          AI 生成报告
+        </a>
+        {% if CURRENT_USER %}
+        <div class="user-menu" id="userMenu">
+          <button class="user-chip" type="button" id="userChip" aria-haspopup="true" aria-expanded="false" title="账号">
+            <span class="user-avatar">{{ (CURRENT_USER.display_name or CURRENT_USER.username)[:1] }}</span>
+            <span class="user-meta">
+              <span class="user-name">{{ CURRENT_USER.display_name or CURRENT_USER.username }}</span>
+              <span class="user-role">{{ '管理员' if CURRENT_USER.role == 'admin' else '普通用户' }}</span>
+            </span>
+            <svg class="user-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6" stroke-linecap="round"/></svg>
+          </button>
+          <div class="user-dropdown" id="userDropdown">
+            <div class="user-dropdown-head">
+              <div class="user-name">{{ CURRENT_USER.display_name or CURRENT_USER.username }}</div>
+              <div class="user-sub">{{ CURRENT_USER.username }}</div>
+            </div>
+            <button class="user-menu-item" type="button" onclick="ZhiShield.changePassword()">修改密码</button>
+            {% if CURRENT_USER.role == 'admin' %}
+            <a class="user-menu-item" href="/users">用户管理</a>
+            {% endif %}
+            <div class="user-menu-sep"></div>
+            <button class="user-menu-item danger" type="button" onclick="ZhiShield.logout()">退出登录</button>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </header>
+    <main class="content">
+      {% if DEFAULT_PWD %}
+      <div class="alert-warn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>
+        <div class="alert-warn-text">当前账号仍在使用内置默认密码，任何知道默认口令的人都能登录，建议立即修改。</div>
+        <button class="btn btn-warning btn-sm" type="button" onclick="ZhiShield.changePassword()">修改密码</button>
+      </div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+<script src="/static/js/app.js?v=20260917a"></script>
+{% block js %}{% endblock %}
+</body>
+</html>

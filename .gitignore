@@ -1,0 +1,37 @@
+# ==================== Python ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ==================== 实例配置 ====================
+# config.json 保存 AI API Key 与 Shelling 平台账号密码，不入库。
+# 首次部署请复制模板：cp config.example.json config.json
+config.json
+
+# ==================== 运行时数据 ====================
+# 数据库、导出报告、上传图片均为运行时产生，不入库。
+# 首次启动时 app.py 会自动建库，演示数据可在「系统设置 → 导入演示数据」一键写入。
+data/zhianjian.db
+data/zhianjian.db-journal
+data/zhianjian.db-wal
+data/zhianjian.db-shm
+data/exports/
+data/uploads/
+data/ai_images/
+
+# ==================== 编辑器 / 系统 ====================
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==================== 临时文件 ====================
+*.orig
+*.bak
+*.log

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}资产分类{% endblock %}
+{% block page_title %}资产分类{% endblock %}
+{% block page_crumb %}工具 / 资产信息归类{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    <div class="form-item"><label>输入资产信息（每行一条，支持 URL / 域名 / IP / IP:端口 / 邮箱 / 手机号等）</label>
+      <textarea class="textarea" id="clsText" rows="10" placeholder="https://www.example.com&#10;192.168.1.10:8080&#10;user@example.com&#10;13800138000&#10;app.example.com"></textarea>
+    </div>
+    <button class="btn btn-primary" style="margin:14px 0" onclick="doClassify()">开始分类</button>
+    <div id="clsResult"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+async function doClassify() {
+  const r = await ZhiShield.api("/api/tools/classify", { json: { text: document.getElementById("clsText").value } });
+  const box = document.getElementById("clsResult");
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  const d = r.data;
+  const typeColor = {
+    "URL": "badge-blue", "域名": "badge-green", "IP": "badge-info", "IP:端口": "badge-info",
+    "IPv6": "badge-info", "邮箱": "badge-medium", "手机号": "badge-warning", "文件路径": "badge-gray", "其他": "badge-gray",
+  };
+  let stats = "";
+  Object.entries(d.stats).forEach(([t, n]) => {
+    stats += `<span class="badge ${typeColor[t] || "badge-gray"}" style="margin-right:8px">${t} × ${n}</span>`;
+  });
+  let rows = "";
+  d.items.forEach(x => {
+    rows += `<tr><td style="color:#64748b">${ZhiShield.esc(x.input)}</td>
+      <td><span class="badge ${typeColor[x.type] || "badge-gray"}">${ZhiShield.esc(x.type)}</span></td>
+      <td style="color:var(--primary);font-weight:600">${ZhiShield.esc(x.value)}</td></tr>`;
+  });
+  box.innerHTML = `<div style="margin-bottom:12px">${stats || '<span style="color:#94a3b8">无数据</span>'}</div>
+    <table class="data-table"><thead><tr><th>原始输入</th><th>类型</th><th>提取值</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="empty-row">暂无数据</td></tr>'}</tbody></table>`;
+}
+</script>
+{% endblock %}

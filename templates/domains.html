@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}域名资产{% endblock %}
+{% block page_title %}域名资产{% endblock %}
+{% block page_crumb %}资产管理 / ICP 备案域名{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="toolbar">
+    <input class="input" id="kwUnit" placeholder="主办单位..." style="width:180px">
+    <input class="input" id="kwDomain" placeholder="域名关键字..." style="width:180px" onkeydown="if(event.key==='Enter')loadDomains(1)">
+    <button class="btn btn-primary" onclick="loadDomains(1)">搜索</button>
+    <span class="spacer"></span>
+    <button class="btn btn-ghost btn-sm" onclick="openJsonImport()">ICP JSON 导入</button>
+    <button class="btn btn-ghost btn-sm" onclick="openBatchQuery()">批量查询</button>
+    <button class="btn btn-primary btn-sm" onclick="openAdd()">+ 新增域名</button>
+  </div>
+  <div class="table-wrap" id="domainTable"><div class="loading-mask"><div class="spinner"></div>加载中...</div></div>
+  <div class="pagination" id="domainPager"></div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+let curPage = 1, curLimit = 10, totalCount = 0;
+
+async function loadDomains(page) {
+  curPage = page;
+  const el = document.getElementById("domainTable");
+  ZhiShield.showLoading(el);
+  const u = document.getElementById("kwUnit").value.trim();
+  const d = document.getElementById("kwDomain").value.trim();
+  const r = await ZhiShield.api(`/api/domains?page=${page}&limit=${curLimit}&unitName=${encodeURIComponent(u)}&domain=${encodeURIComponent(d)}`);
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  totalCount = r.count;
+  if (!r.data.length) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-title">暂无域名资产</div><div class="empty-desc">可通过「ICP JSON 导入」或「+ 新增域名」录入</div></div>`;
+  } else {
+    let html = `<table class="data-table"><thead><tr>
+      <th>ID</th><th>主办单位</th><th>域名</th><th>ICP备案号</th><th>服务备案号</th>
+      <th>单位性质</th><th>审核日期</th><th>操作</th></tr></thead><tbody>`;
+    r.data.forEach(x => {
+      html += `<tr>
+        <td>${x.id}</td>
+        <td style="max-width:170px;font-weight:600">${ZhiShield.esc(x.unit_name || "-")}</td>
+        <td style="color:var(--primary);font-weight:600">${ZhiShield.esc(x.domain)}</td>
+        <td>${ZhiShield.esc(x.main_licence || "-")}</td>
+        <td>${ZhiShield.esc(x.service_licence || "-")}</td>
+        <td>${ZhiShield.esc(x.nature_name || "-")}</td>
+        <td style="font-size:12px;color:#94a3b8">${ZhiShield.fmtTime(x.update_record_time) || "-"}</td>
+        <td style="white-space:nowrap">
+          <a class="link-btn" onclick="editDomain(${x.id})">编辑</a>
+          <a class="link-btn danger" onclick="delDomain(${x.id},'${ZhiShield.esc(x.domain).replace(/'/g,"\\'")}')">删除</a>
+        </td></tr>`;
+    });
+    el.innerHTML = html + "</tbody></table>";
+  }
+  ZhiShield.renderPagination(document.getElementById("domainPager"), curPage, totalCount, curLimit, loadDomains);
+}
+
+function openAdd() {
+  ZhiShield.openModal({
+    title: "新增域名",
+    size: "",
+    body: `<div class="form-grid">
+      <div class="form-item"><label>主办单位</label><input class="input" id="d_unit_name" placeholder="单位名称"></div>
+      <div class="form-item"><label>域名 <span class="req">*</span></label><input class="input" id="d_domain" placeholder="example.com"></div>
+      <div class="form-item"><label>ICP备案号</label><input class="input" id="d_main_licence"></div>
+      <div class="form-item"><label>服务备案号</label><input class="input" id="d_service_licence"></div>
+      <div class="form-item"><label>单位性质</label><input class="input" id="d_nature_name"></div>
+      <div class="form-item"><label>前置审批项</label><input class="input" id="d_content_type_name"></div>
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doAdd()">保存</button>`
+  });
+}
+async function doAdd() {
+  const domain = document.getElementById("d_domain").value.trim();
+  if (!domain) { ZhiShield.error("请输入域名"); return; }
+  const r = await ZhiShield.api("/api/domains/edit", { json: {
+    unit_name: document.getElementById("d_unit_name").value.trim(),
+    domain,
+    main_licence: document.getElementById("d_main_licence").value.trim(),
+    service_licence: document.getElementById("d_service_licence").value.trim(),
+    nature_name: document.getElementById("d_nature_name").value.trim(),
+    content_type_name: document.getElementById("d_content_type_name").value.trim(),
+  }});
+  if (r.code === 0) { ZhiShield.success("新增成功"); ZhiShield.closeModal(); loadDomains(1); }
+  else ZhiShield.error(r.msg);
+}
+
+async function editDomain(id) {
+  // 直接从列表数据获取简化编辑
+  const r = await ZhiShield.api(`/api/domains?page=1&limit=100`);
+  const x = (r.data || []).find(i => i.id === id);
+  if (!x) return;
+  ZhiShield.openModal({
+    title: "编辑域名",
+    size: "",
+    body: `<div class="form-grid">
+      <div class="form-item"><label>主办单位</label><input class="input" id="d_unit_name" value="${ZhiShield.esc(x.unit_name)}"></div>
+      <div class="form-item"><label>域名</label><input class="input" id="d_domain" value="${ZhiShield.esc(x.domain)}"></div>
+      <div class="form-item"><label>ICP备案号</label><input class="input" id="d_main_licence" value="${ZhiShield.esc(x.main_licence)}"></div>
+      <div class="form-item"><label>服务备案号</label><input class="input" id="d_service_licence" value="${ZhiShield.esc(x.service_licence)}"></div>
+      <div class="form-item"><label>单位性质</label><input class="input" id="d_nature_name" value="${ZhiShield.esc(x.nature_name)}"></div>
+      <div class="form-item"><label>前置审批项</label><input class="input" id="d_content_type_name" value="${ZhiShield.esc(x.content_type_name)}"></div>
+      <div class="form-item"><label>审核日期</label><input class="input" id="d_update_record_time" value="${ZhiShield.esc(x.update_record_time)}"></div>
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doEdit(${id})">保存</button>`
+  });
+}
+async function doEdit(id) {
+  const r = await ZhiShield.api("/api/domains/edit", { json: {
+    id,
+    unit_name: document.getElementById("d_unit_name").value.trim(),
+    domain: document.getElementById("d_domain").value.trim(),
+    main_licence: document.getElementById("d_main_licence").value.trim(),
+    service_licence: document.getElementById("d_service_licence").value.trim(),
+    nature_name: document.getElementById("d_nature_name").value.trim(),
+    content_type_name: document.getElementById("d_content_type_name").value.trim(),
+    update_record_time: document.getElementById("d_update_record_time").value,
+  }});
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadDomains(curPage); }
+  else ZhiShield.error(r.msg);
+}
+
+function delDomain(id, domain) {
+  ZhiShield.confirmDialog(`确定删除域名「${domain}」？（软删除，可恢复）`, async () => {
+    const r = await ZhiShield.api("/api/domains/delete", { json: { id } });
+    if (r.code === 0) { ZhiShield.success("已删除"); loadDomains(curPage); } else ZhiShield.error(r.msg);
+  }, "删除");
+}
+
+/* ICP JSON 导入 */
+function openBatchQuery() {
+  ZhiShield.openModal({
+    title: "域名 / 单位批量查询",
+    size: "",
+    body: `<div style="display:flex;flex-direction:column;gap:12px">
+      <div class="form-item"><label>查询类型</label>
+        <select class="select" id="bqType">
+          <option value="unit">按单位名称（模糊）</option>
+          <option value="domain">按域名关键字（模糊）</option>
+        </select></div>
+      <div class="form-item"><label>查询值（逗号/换行分隔）</label>
+        <textarea class="textarea" id="bqText" rows="6" placeholder="example.com&#10;test.com"></textarea></div>
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doBatchQuery()">查询</button>`
+  });
+}
+async function doBatchQuery() {
+  const values = document.getElementById("bqText").value.split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
+  if (!values.length) { ZhiShield.error("请输入查询内容"); return; }
+  const r = await ZhiShield.api("/api/domains/batch-query", { json: { query_type: document.getElementById("bqType").value, values } });
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  if (!r.data.length) { ZhiShield.info("未查询到匹配记录"); return; }
+  ZhiShield.openModal({
+    title: `查询结果（${r.data.length} 条）`,
+    size: "lg",
+    body: `<table class="data-table"><thead><tr><th>主办单位</th><th>域名</th></tr></thead><tbody>` +
+      r.data.map(x => `<tr><td style="font-weight:600">${ZhiShield.esc(x.unit_name || "-")}</td>
+        <td style="color:var(--primary)">${ZhiShield.esc(x.domain)}</td></tr>`).join("") + "</tbody></table>",
+    footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`
+  });
+}
+
+function openJsonImport() {
+  ZhiShield.openModal({
+    title: "ICP 域名 JSON 导入",
+    size: "lg",
+    body: `<div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-size:13px;color:#64748b;line-height:1.8">
+        兼容三种格式：<br>
+        ① 直接粘贴 JSON 数组：[{"domain": "...", "unitName": "...", ...}]<br>
+        ② {"params": {"list": [...]}}<br>
+        ③ {"result": {"params": {"list": [...]}}}<br>
+        已存在域名会自动更新信息，不重复入库。
+      </div>
+      <textarea class="textarea" id="jsonText" rows="10" placeholder="粘贴 ICP 备案查询返回的 JSON 数据包"></textarea>
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doJsonImport()">导入</button>`
+  });
+}
+async function doJsonImport() {
+  const text = document.getElementById("jsonText").value.trim();
+  if (!text) { ZhiShield.error("请输入 JSON 数据"); return; }
+  const r = await ZhiShield.api("/api/domains/import-json", { json: { data: text } });
+  if (r.code === 0) {
+    ZhiShield.success(`导入完成：成功 ${r.success_count} 条，错误 ${r.error_count} 条`);
+    if (r.errors && r.errors.length) {
+      ZhiShield.openModal({ title: "导入错误详情",
+        body: `<div class="code-block" style="max-height:40vh;overflow:auto">${ZhiShield.esc(r.errors.join("\n"))}</div>`,
+        footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>` });
+    }
+    ZhiShield.closeModal();
+    loadDomains(1);
+  } else ZhiShield.error(r.msg);
+}
+
+loadDomains(1);
+</script>
+{% endblock %}

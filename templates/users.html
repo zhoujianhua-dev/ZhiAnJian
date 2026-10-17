@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}用户管理{% endblock %}
+{% block page_title %}用户管理{% endblock %}
+{% block page_crumb %}系统设置 / 账号{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="toolbar">
+    <input class="input" id="kw" placeholder="按用户名或姓名搜索..." style="width:220px"
+           onkeydown="if(event.key==='Enter')loadUsers()">
+    <button class="btn btn-ghost btn-sm" onclick="loadUsers()">搜索</button>
+    <span class="spacer"></span>
+    <span style="font-size:12px;color:#94a3b8" id="userHint"></span>
+    <button class="btn btn-primary btn-sm" onclick="openAdd()">+ 新建用户</button>
+  </div>
+  <div class="table-wrap" id="userTable"><div class="loading-mask"><div class="spinner"></div>加载中...</div></div>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="card-header"><h3>角色说明</h3></div>
+  <div class="card-body" style="font-size:13px;line-height:2;color:var(--text-2)">
+    <div><span class="badge badge-blue">管理员</span> 全部业务功能，并可进入「用户管理」新建/停用账号、重置密码</div>
+    <div><span class="badge badge-gray">普通用户</span> 全部业务功能（仪表盘、资产、漏洞、报告、AI、扫描、工具），无用户管理入口</div>
+    <div style="margin-top:6px">密码以 PBKDF2 加盐哈希存储，忘记密码只能由管理员重置；系统始终至少保留一名启用的管理员。</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+let ME = null;
+let USERS = [];
+
+async function loadUsers() {
+  const el = document.getElementById("userTable");
+  ZhiShield.showLoading(el);
+  const kw = document.getElementById("kw").value.trim();
+  const r = await ZhiShield.api("/api/users?keyword=" + encodeURIComponent(kw));
+  if (!r || r.code !== 0) { el.innerHTML = `<div class="empty-state"><div class="empty-title">读取失败</div><div class="empty-desc">${ZhiShield.esc((r && r.msg) || "")}</div></div>`; return; }
+  USERS = r.data;
+
+  if (!ME) {
+    const m = await ZhiShield.api("/api/auth/me");
+    if (m && m.code === 0) ME = m.data;
+  }
+  document.getElementById("userHint").textContent = `共 ${r.count} 个账号`;
+
+  if (!r.data.length) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-title">没有匹配的账号</div><div class="empty-desc">换个关键词，或点击右上角新建用户</div></div>`;
+    return;
+  }
+  let html = `<table class="data-table"><thead><tr>
+      <th>用户名</th><th>姓名</th><th>角色</th><th>状态</th><th>最近登录</th><th>创建时间</th><th>备注</th><th>操作</th>
+    </tr></thead><tbody>`;
+  r.data.forEach(u => {
+    const self = ME && u.id === ME.id;
+    const roleBadge = u.role === "admin" ? '<span class="badge badge-blue">管理员</span>' : '<span class="badge badge-gray">普通用户</span>';
+    const stBadge = u.is_active ? '<span class="badge badge-green">启用</span>' : '<span class="badge badge-gray">已停用</span>';
+    const name = ZhiShield.esc(u.display_name || "-");
+    html += `<tr>
+      <td style="font-weight:700">${ZhiShield.esc(u.username)}
+        ${self ? '<span class="badge badge-info" style="margin-left:6px">当前登录</span>' : ""}</td>
+      <td>${name}</td>
+      <td>${roleBadge}</td>
+      <td>${stBadge}</td>
+      <td style="color:#94a3b8;font-size:12px">${u.last_login_at ? ZhiShield.fmtTime(u.last_login_at) : "从未登录"}</td>
+      <td style="color:#94a3b8;font-size:12px">${ZhiShield.fmtTime(u.created_at)}</td>
+      <td style="max-width:180px;font-size:12px;color:#64748b">${ZhiShield.esc(u.remark || "-")}</td>
+      <td style="white-space:nowrap">
+        <a class="link-btn" onclick="openEdit(${u.id})">编辑</a>
+        <a class="link-btn" onclick="openReset(${u.id})">重置密码</a>
+        ${self ? "" : `<a class="link-btn" onclick="toggleActive(${u.id})">${u.is_active ? "停用" : "启用"}</a>`}
+        ${self ? "" : `<a class="link-btn danger" onclick="delUser(${u.id},'${ZhiShield.esc(u.username).replace(/'/g, "\\'")}')">删除</a>`}
+      </td></tr>`;
+  });
+  el.innerHTML = html + "</tbody></table>";
+}
+
+function _find(id) { return USERS.find(u => u.id === id); }
+
+async function openAdd() {
+  ZhiShield.openModal({
+    title: "新建用户",
+    body: `<div class="form-grid">
+      <div class="form-item"><label>用户名 <span class="req">*</span></label>
+        <input class="input" id="uName" placeholder="3-32 位字母、数字、_ . -"></div>
+      <div class="form-item"><label>姓名</label><input class="input" id="uDisplay" placeholder="留空则同用户名"></div>
+      <div class="form-item"><label>初始密码 <span class="req">*</span></label>
+        <input class="input" id="uPwd" type="password" placeholder="至少 6 位"></div>
+      <div class="form-item"><label>角色</label>
+        <select class="select" id="uRole">
+          <option value="user">普通用户</option>
+          <option value="admin">管理员</option>
+        </select></div>
+      <div class="form-item full"><label>备注</label><input class="input" id="uRemark" placeholder="如：所属部门 / 用途"></div>
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doAdd()">创建</button>`
+  });
+}
+
+async function doAdd() {
+  const r = await ZhiShield.api("/api/users/add", { json: {
+    username: document.getElementById("uName").value.trim(),
+    password: document.getElementById("uPwd").value,
+    display_name: document.getElementById("uDisplay").value.trim(),
+    role: document.getElementById("uRole").value,
+    remark: document.getElementById("uRemark").value.trim(),
+  }});
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadUsers(); }
+  else ZhiShield.error(r.msg);
+}
+
+async function openEdit(id) {
+  const u = _find(id);
+  if (!u) return;
+  ZhiShield.openModal({
+    title: "编辑用户 · " + u.username,
+    body: `<div class="form-grid">
+      <div class="form-item"><label>用户名</label><input class="input" value="${ZhiShield.esc(u.username)}" disabled></div>
+      <div class="form-item"><label>姓名</label><input class="input" id="uDisplay" value="${ZhiShield.esc(u.display_name || "")}"></div>
+      <div class="form-item"><label>角色</label>
+        <select class="select" id="uRole" ${ME && u.id === ME.id ? "disabled" : ""}>
+          <option value="user" ${u.role === "user" ? "selected" : ""}>普通用户</option>
+          <option value="admin" ${u.role === "admin" ? "selected" : ""}>管理员</option>
+        </select></div>
+      <div class="form-item"><label>状态</label>
+        <select class="select" id="uActive" ${ME && u.id === ME.id ? "disabled" : ""}>
+          <option value="1" ${u.is_active ? "selected" : ""}>启用</option>
+          <option value="0" ${u.is_active ? "" : "selected"}>停用</option>
+        </select></div>
+      <div class="form-item full"><label>备注</label><input class="input" id="uRemark" value="${ZhiShield.esc(u.remark || "")}"></div>
+    </div>
+    ${ME && u.id === ME.id ? '<div style="font-size:12px;color:#94a3b8;margin-top:10px">当前登录账号不能修改自己的角色与状态</div>' : ""}`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doEdit(${id})">保存</button>`
+  });
+}
+
+async function doEdit(id) {
+  const u = _find(id);
+  const r = await ZhiShield.api("/api/users/update", { json: {
+    id,
+    display_name: document.getElementById("uDisplay").value.trim(),
+    role: document.getElementById("uRole").value,
+    is_active: parseInt(document.getElementById("uActive").value, 10),
+    remark: document.getElementById("uRemark").value.trim(),
+  }});
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadUsers(); }
+  else ZhiShield.error(r.msg);
+}
+
+function openReset(id) {
+  const u = _find(id);
+  if (!u) return;
+  ZhiShield.openModal({
+    title: "重置密码 · " + u.username,
+    body: `<div class="form-item"><label>新密码 <span class="req">*</span></label>
+        <input class="input" id="rPwd" type="password" placeholder="至少 6 位"></div>
+      <div style="font-size:12px;color:#94a3b8;margin-top:10px">重置后请把新密码告知本人，并提醒其尽快自行修改。</div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doReset(${id})">确认重置</button>`
+  });
+}
+
+async function doReset(id) {
+  const pwd = document.getElementById("rPwd").value;
+  if (!pwd) { ZhiShield.error("请输入新密码"); return; }
+  const r = await ZhiShield.api("/api/users/update", { json: { id, password: pwd } });
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadUsers(); }
+  else ZhiShield.error(r.msg);
+}
+
+async function toggleActive(id) {
+  const u = _find(id);
+  if (!u) return;
+  const next = u.is_active ? 0 : 1;
+  if (!next) {
+    ZhiShield.confirmDialog(`停用后「${ZhiShield.esc(u.username)}」将立即无法登录，确定停用？`, async () => {
+      const r = await ZhiShield.api("/api/users/update", { json: { id, is_active: 0 } });
+      if (r.code === 0) { ZhiShield.success(r.msg); loadUsers(); } else ZhiShield.error(r.msg);
+    }, "停用");
+    return;
+  }
+  const r = await ZhiShield.api("/api/users/update", { json: { id, is_active: 1 } });
+  if (r.code === 0) { ZhiShield.success(r.msg); loadUsers(); } else ZhiShield.error(r.msg);
+}
+
+function delUser(id, username) {
+  ZhiShield.confirmDialog(`确定删除账号「${username}」？删除后该账号立即失效且不可恢复。`, async () => {
+    const r = await ZhiShield.api("/api/users/delete", { json: { id } });
+    if (r.code === 0) { ZhiShield.success(r.msg); loadUsers(); } else ZhiShield.error(r.msg);
+  }, "删除");
+}
+
+loadUsers();
+</script>
+{% endblock %}

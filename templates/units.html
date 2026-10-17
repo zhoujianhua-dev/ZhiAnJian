@@ -1,0 +1,460 @@
+{% extends "base.html" %}
+{% block title %}单位管理{% endblock %}
+{% block page_title %}单位列表{% endblock %}
+{% block page_crumb %}单位管理 / 单位资产{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="toolbar">
+    <input class="input" id="kw" placeholder="按企业名称搜索..." style="width:220px" onkeydown="if(event.key==='Enter')loadUnits(1)">
+    <select class="select" id="tagFilter" style="width:150px" onchange="loadUnits(1)">
+      <option value="">全部标签</option>
+    </select>
+    <button class="btn btn-primary" onclick="loadUnits(1)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>搜索
+    </button>
+    <span class="spacer"></span>
+    <button class="btn btn-ghost btn-sm" onclick="downloadTemplate()">下载导入模板</button>
+    <button class="btn btn-ghost btn-sm" onclick="openImportExcel()">Excel 批量导入</button>
+    <button class="btn btn-ghost btn-sm" onclick="openIcpImport()">ICP 数据导入</button>
+    <button class="btn btn-ghost btn-sm" onclick="openBatchQuery()">批量查询</button>
+    <button class="btn btn-ghost btn-sm" title="把已有漏洞报告里的单位、域名一键补录到资产库（不会重复添加）" onclick="syncFromReports()">🔄 从报告同步资产</button>
+    <button class="btn btn-success btn-sm" onclick="openBatchExport()">📤 批量导出<span id="selBadge" style="display:inline-block;margin-left:5px;background:rgba(255,255,255,.25);border-radius:10px;padding:0 7px;font-size:12px">0</span></button>
+    <button class="btn btn-primary btn-sm" onclick="openAdd()">+ 新增单位</button>
+  </div>
+  <div class="table-wrap" id="unitTable"><div class="loading-mask"><div class="spinner"></div>加载中...</div></div>
+  <div class="pagination" id="unitPager"></div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+let curPage = 1, curLimit = 10, totalCount = 0;
+const selectedUnitIds = new Set();   // 跨页累计勾选的单位 id
+let _unitReports = [], _defaultTplId = "";
+
+function toggleUnit(cb) {
+  const id = parseInt(cb.value);
+  cb.checked ? selectedUnitIds.add(id) : selectedUnitIds.delete(id);
+  syncCheckAll();
+}
+function toggleAllUnits(cb) {
+  document.querySelectorAll(".unit-check").forEach(c => {
+    c.checked = cb.checked;
+    const id = parseInt(c.value);
+    cb.checked ? selectedUnitIds.add(id) : selectedUnitIds.delete(id);
+  });
+  refreshSelBadge();
+}
+function syncCheckAll() {
+  const boxes = Array.from(document.querySelectorAll(".unit-check"));
+  const all = document.getElementById("checkAllUnits");
+  if (all) all.checked = boxes.length > 0 && boxes.every(c => c.checked);
+  refreshSelBadge();
+}
+function refreshSelBadge() {
+  const b = document.getElementById("selBadge");
+  if (b) b.textContent = selectedUnitIds.size;
+}
+function currentFilterQuery() {
+  const kw = document.getElementById("kw").value.trim();
+  const tag = document.getElementById("tagFilter").value;
+  return `enterprise_name=${encodeURIComponent(kw)}&tag_id=${encodeURIComponent(tag)}`;
+}
+
+async function loadTags() {
+  const r = await ZhiShield.api("/api/tags/options");
+  if (r.code === 0) {
+    const sel = document.getElementById("tagFilter");
+    r.data.forEach(t => {
+      const o = document.createElement("option");
+      o.value = t.id; o.textContent = t.name;
+      sel.appendChild(o);
+    });
+  }
+}
+
+async function syncFromReports() {
+  ZhiShield.confirmDialog(
+    "将扫描全部漏洞报告，把其中的单位、域名补录到资产库（已存在的不会重复添加），并回写各单位域名数量。是否继续？",
+    async () => {
+      const r = await ZhiShield.api("/api/units/sync-from-reports", { json: {} });
+      if (r.code === 0) { ZhiShield.success(r.msg); loadUnits(1); }
+      else ZhiShield.error(r.msg);
+    }, "开始同步");
+}
+
+async function loadUnits(page) {
+  curPage = page;
+  const kw = document.getElementById("kw").value.trim();
+  const tag = document.getElementById("tagFilter").value;
+  const el = document.getElementById("unitTable");
+  ZhiShield.showLoading(el);
+  const r = await ZhiShield.api(`/api/units?page=${page}&limit=${curLimit}&enterprise_name=${encodeURIComponent(kw)}&tag_id=${tag}`);
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  totalCount = r.count;
+  if (!r.data.length) {
+    el.innerHTML = `<div class="empty-state">
+      <div class="empty-title">暂无单位数据</div>
+      <div class="empty-desc">可点击右上角「新增单位」批量录入，或使用「Excel 批量导入」</div>
+    </div>`;
+  } else {
+    let html = `<table class="data-table"><thead><tr>
+      <th style="width:36px"><input type="checkbox" id="checkAllUnits" onchange="toggleAllUnits(this)" title="全选本页"></th>
+      <th>ID</th><th>企业名称</th><th>经营状态</th><th>法定代表人</th><th>注册资本</th>
+      <th>地区</th><th>ICP 备案数</th><th>标签</th><th>操作</th></tr></thead><tbody>`;
+    r.data.forEach(u => {
+      const tags = (u.tag_names || []).map(t => `<span class="chip">${ZhiShield.esc(t)}</span>`).join("");
+      const checked = selectedUnitIds.has(u.id) ? "checked" : "";
+      html += `<tr>
+        <td><input type="checkbox" class="unit-check" value="${u.id}" ${checked} onchange="toggleUnit(this)"></td>
+        <td>${u.id}</td>
+        <td style="font-weight:600">${ZhiShield.esc(u.enterprise_name)}</td>
+        <td>${ZhiShield.esc(u.business_status || "-")}</td>
+        <td>${ZhiShield.esc(u.legal_representative || "-")}</td>
+        <td>${ZhiShield.esc(u.registered_capital || "-")}</td>
+        <td>${ZhiShield.esc(u.province || "")}${ZhiShield.esc(u.city || "")}</td>
+        <td>${u.icp_total >= 0 ? u.icp_total : "-"}</td>
+        <td style="max-width:150px">${tags || "-"}</td>
+        <td style="white-space:nowrap">
+          <a class="link-btn" onclick="viewUnit(${u.id})">详情</a>
+          <a class="link-btn" style="color:#7c3aed" onclick="openUnitTags(${u.id})">标签</a>
+          <a class="link-btn" onclick="editUnit(${u.id})">编辑</a>
+          <a class="link-btn danger" onclick="delUnit(${u.id},'${ZhiShield.esc(u.enterprise_name).replace(/'/g,"\\'")}')">删除</a>
+        </td></tr>`;
+    });
+    el.innerHTML = html + "</tbody></table>";
+    syncCheckAll();
+  }
+  ZhiShield.renderPagination(document.getElementById("unitPager"), curPage, totalCount, curLimit, loadUnits);
+}
+
+/* 新增（textarea 批量） */
+function openAdd() {
+  ZhiShield.openModal({
+    title: "新增单位（每行一个）",
+    size: "",
+    body: `<div class="form-item">
+      <label>企业名称 <span class="req">*</span></label>
+      <textarea class="textarea" id="addText" rows="8" placeholder="每行一个单位名称，支持批量粘贴"></textarea>
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doAdd()">导入</button>`
+  });
+}
+async function doAdd() {
+  const text = document.getElementById("addText").value;
+  if (!text.trim()) { ZhiShield.error("请输入单位名称"); return; }
+  const r = await ZhiShield.api("/api/units/add", { json: { enterprise_name: text } });
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadUnits(1); }
+  else ZhiShield.error(r.msg);
+}
+
+/* 详情 */
+async function viewUnit(id) {
+  const r = await ZhiShield.api("/api/unit/detail?id=" + id);
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  const u = r.data;
+  const rows = [
+    ["企业名称", u.enterprise_name], ["经营状态", u.business_status],
+    ["法定代表人", u.legal_representative], ["注册资本", u.registered_capital],
+    ["实缴资本", u.paid_in_capital], ["所属省份/城市/区县", `${u.province} ${u.city} ${u.district}`],
+    ["统一社会信用代码", u.credit_code], ["所属行业", u.industry],
+    ["曾用名", u.former_names], ["注册地址", u.registered_address],
+    ["备案状态", ({has_filing:"有备案信息",no_filing:"无备案信息",unknown:"未开始查询"})[u.filing_status] || u.filing_status],
+    ["ICP 备案数", u.icp_total >= 0 ? u.icp_total : "-"], ["域名备案数", u.domain_count >= 0 ? u.domain_count : "-"],
+  ];
+  ZhiShield.openModal({
+    title: "单位详情",
+    size: "",
+    body: `<div>${rows.map(([k, v]) => `<div class="kv-row"><div class="k">${k}</div><div class="v">${ZhiShield.esc(v || "-")}</div></div>`).join("")}</div>`,
+    footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`
+  });
+}
+
+/* 编辑 */
+async function editUnit(id) {
+  const r = await ZhiShield.api("/api/unit/detail?id=" + id);
+  if (r.code !== 0) return;
+  const u = r.data;
+  const f = (k, label, ph = "") => `<div class="form-item"><label>${label}</label>
+    <input class="input" id="f_${k}" value="${ZhiShield.esc(u[k] || "")}" placeholder="${ph}"></div>`;
+  const textarea = (k, label) => `<div class="form-item full"><label>${label}</label>
+    <textarea class="textarea" id="f_${k}" rows="3">${ZhiShield.esc(u[k] || "")}</textarea></div>`;
+  ZhiShield.openModal({
+    title: "编辑单位",
+    size: "lg",
+    body: `<div class="form-grid">
+      ${f("enterprise_name", "企业名称", "必填")}
+      ${f("business_status", "经营状态")}
+      ${f("legal_representative", "法定代表人")}
+      ${f("registered_capital", "注册资本")}
+      ${f("paid_in_capital", "实缴资本")}
+      ${f("credit_code", "统一社会信用代码")}
+      ${f("province", "省份")} ${f("city", "城市")} ${f("district", "区县")}
+      ${f("industry", "所属行业")} ${f("former_names", "曾用名")}
+      <div class="form-item"><label>备案状态</label><select class="select" id="f_filing_status">
+        <option value="unknown" ${u.filing_status==="unknown"?"selected":""}>未开始查询</option>
+        <option value="has_filing" ${u.filing_status==="has_filing"?"selected":""}>有备案信息</option>
+        <option value="no_filing" ${u.filing_status==="no_filing"?"selected":""}>无备案信息</option>
+      </select></div>
+      ${f("icp_total", "ICP 官网备案数量")} ${f("domain_count", "数据库备案数量")}
+      ${textarea("registered_address", "注册地址")}
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doEdit(${id})">保存</button>`
+  });
+}
+async function doEdit(id) {
+  const keys = ["enterprise_name","business_status","legal_representative","registered_capital",
+    "paid_in_capital","credit_code","province","city","district","industry","former_names",
+    "filing_status","icp_total","domain_count","registered_address"];
+  const body = { id };
+  keys.forEach(k => { const el = document.getElementById("f_" + k); if (el) body[k] = el.value; });
+  const r = await ZhiShield.api("/api/unit/update", { json: body });
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadUnits(curPage); }
+  else ZhiShield.error(r.msg);
+}
+
+/* 删除 */
+function delUnit(id, name) {
+  ZhiShield.confirmDialog(`确定删除单位「${name}」？该操作不可恢复。`, async () => {
+    const r = await ZhiShield.api("/api/unit/delete", { json: { id } });
+    if (r.code === 0) { ZhiShield.success("已删除"); loadUnits(curPage); } else ZhiShield.error(r.msg);
+  }, "删除");
+}
+
+/* 模板下载 */
+function downloadTemplate() {
+  window.location.href = "/api/units/template";
+}
+
+/* ---------------- 批量导出 ---------------- */
+function openBatchExport() {
+  const n = selectedUnitIds.size;
+  const card = "cursor:pointer;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;margin-bottom:12px;transition:.15s";
+  ZhiShield.openModal({
+    title: "批量导出",
+    size: "",
+    body: `<div style="font-size:14px;margin-bottom:14px">已勾选 <b style="color:#2563eb;font-size:17px">${n}</b> 个单位（可跨页累计勾选）。</div>
+      <div style="${card}" onmouseover="this.style.borderColor='#2563eb';this.style.background='#f8fafc'" onmouseout="this.style.borderColor='#e2e8f0';this.style.background=''" onclick="exportUnitRoster()">
+        <div style="font-weight:700;font-size:14.5px">📊 导出单位名单（Excel）</div>
+        <div style="font-size:12.5px;color:#64748b;margin-top:4px;line-height:1.7">${n ? `导出勾选的 ${n} 个单位的完整工商 / 备案 / 标签信息` : "未勾选时，导出当前搜索 / 标签条件下的全部单位"}</div>
+      </div>
+      <div style="${card}" onmouseover="this.style.borderColor='#16a34a';this.style.background='#f6fef9'" onmouseout="this.style.borderColor='#e2e8f0';this.style.background=''" onclick="openUnitReportExport()">
+        <div style="font-weight:700;font-size:14.5px">📄 导出这些单位的漏洞报告（Word / PDF）</div>
+        <div style="font-size:12.5px;color:#64748b;margin-top:4px;line-height:1.7">${n ? "自动汇总勾选单位名下的全部漏洞报告，选择模板后一次性导出" : "请先在列表勾选单位后再使用"}</div>
+      </div>
+      ${n ? `<a class="link-btn" style="font-size:12.5px" onclick="clearUnitSel()">清空全部勾选</a>` : ""}`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">关闭</button>`
+  });
+}
+function clearUnitSel() {
+  selectedUnitIds.clear();
+  ZhiShield.closeModal();
+  loadUnits(curPage);
+}
+function exportUnitRoster() {
+  const ids = [...selectedUnitIds].join(",");
+  const q = ids ? `ids=${ids}` : currentFilterQuery();
+  window.location.href = "/api/units/export?" + q;
+  ZhiShield.success("开始下载单位名单 Excel");
+}
+
+async function openUnitReportExport() {
+  if (!selectedUnitIds.size) { ZhiShield.error("请先在列表勾选要导出报告的单位"); return; }
+  const ids = [...selectedUnitIds].join(",");
+  const r = await ZhiShield.api("/api/units/report-ids?ids=" + encodeURIComponent(ids));
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  _unitReports = r.data || [];
+  const tl = await ZhiShield.api("/api/report/templates");
+  const tlist = (tl.code === 0 ? tl.data : []) || [];
+  _defaultTplId = ((tlist.find(t => t.is_default) || tlist[0] || {}).id) || "";
+  if (!_unitReports.length) { ZhiShield.info("这些单位名下还没有漏洞报告，可先到「AI 智能生成」或「报告管理」录入"); return; }
+  const rows = _unitReports.slice(0, 50).map(x =>
+    `<tr><td>${x.id}</td><td style="font-weight:600">${ZhiShield.esc(x.unit_name)}</td><td>${ZhiShield.esc(x.vul_name)}</td><td>${ZhiShield.sevBadge(x.severity)}</td></tr>`).join("");
+  ZhiShield.openModal({
+    title: `导出勾选单位的 ${_unitReports.length} 份漏洞报告`,
+    size: "xl",
+    body: `<div style="max-height:240px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:12px">
+        <table class="data-table"><thead><tr><th style="width:50px">ID</th><th>单位</th><th>漏洞名称</th><th style="width:80px">等级</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${_unitReports.length > 50 ? `<div style="color:#b45309;font-size:12px;margin-bottom:8px">列表仅预览前 50 条，实际导出全部 ${_unitReports.length} 条</div>` : ""}
+      <div class="form-grid">
+        <div class="form-item"><label>导出格式</label>
+          <select class="select" id="uxFmt" onchange="uxTplOptions()">
+            <option value="docx">Word（.docx）</option><option value="pdf">PDF（.pdf）</option>
+          </select></div>
+        <div class="form-item"><label>排版模板</label><select class="select" id="uxTpl"></select></div>
+        <div class="form-item full"><label>报告落款单位（可选）</label><input class="input" id="uxOrg" placeholder="如：XX 网络安全测评中心"></div>
+      </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-warning" id="uxBtn" onclick="doUnitReportExport()">生成并下载</button>`
+  });
+  uxTplOptions();
+}
+function uxTplOptions() {
+  const fmt = document.getElementById("uxFmt").value;
+  const sel = document.getElementById("uxTpl");
+  const docx = [["custom", "标准模板（占位符自动填充，与原工具一致）"], ["normal", "普通模板（漏洞详情排版）"], ["gongwen", "网信办公文（仅单条）"], ["summary", "汇总模板（多漏洞清单）"]];
+  const pdf = [["normal", "普通模板（漏洞详情排版）"], ["gongwen", "网信办公文（仅单条）"], ["summary", "汇总模板（多漏洞清单）"]];
+  const opts = fmt === "docx" ? docx : pdf;
+  sel.innerHTML = opts.map(o => `<option value="${o[0]}">${o[1]}</option>`).join("");
+}
+async function doUnitReportExport() {
+  const ids = _unitReports.map(x => x.id);
+  const fmt = document.getElementById("uxFmt").value;
+  const tplKey = document.getElementById("uxTpl").value;
+  const org = document.getElementById("uxOrg").value.trim();
+  if (tplKey === "gongwen" && ids.length !== 1) { ZhiShield.error("公文模板仅支持单条报告，请只勾选对应一份报告的单位"); return; }
+  if (fmt === "pdf" && tplKey === "custom") { ZhiShield.error("PDF 暂不支持自定义模板，请选其他模板或改用 Word"); return; }
+  const btn = document.getElementById("uxBtn");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:14px;height:14px"></span> 生成中...';
+  try {
+    const ep = fmt === "pdf" ? "/api/report/export-pdf" : "/api/report/export";
+    const r = await ZhiShield.api(ep, { json: { report_ids: ids, template_key: tplKey, template_id: tplKey === "custom" ? _defaultTplId : "", org_footer: org } });
+    if (r.code === 0) {
+      ZhiShield.success("生成成功，开始下载");
+      ZhiShield.closeModal();
+      setTimeout(() => { window.location.href = r.url; }, 400);
+    } else ZhiShield.error(r.msg);
+  } catch (e) { ZhiShield.error("导出失败：" + e.message); }
+  finally { btn.disabled = false; btn.innerHTML = "生成并下载"; }
+}
+
+/* Excel 导入 */
+function openImportExcel() {
+  ZhiShield.openModal({
+    title: "Excel 批量导入 / 更新单位",
+    size: "",
+    body: `<div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:13px;color:#64748b;line-height:1.8">
+        1. 先下载「导入模板」填写数据<br>
+        2. 上传 Excel，按「企业名称」匹配更新，不存在则新增；<br>
+        3. 经营状态为注销/吊销等无效状态的新单位会自动跳过。
+      </div>
+      <input type="file" id="excelFile" accept=".xlsx,.xls" class="input">
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doImportExcel()">开始导入</button>`
+  });
+}
+async function doImportExcel() {
+  const f = document.getElementById("excelFile").files[0];
+  if (!f) { ZhiShield.error("请选择 Excel 文件"); return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  const r = await ZhiShield.api("/api/units/update", { method: "POST", body: fd });
+  if (r.code === 0) { ZhiShield.success(r.msg); ZhiShield.closeModal(); loadUnits(1); }
+  else ZhiShield.error(r.msg);
+}
+
+/* ICP 数据导入 */
+function openBatchQuery() {
+  ZhiShield.openModal({
+    title: "批量查询单位",
+    size: "",
+    body: `<div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-size:13px;color:#64748b">输入单位名称关键字（逗号/换行分隔），支持模糊匹配</div>
+      <textarea class="textarea" id="bqText" rows="6" placeholder="示例公司A&#10;示例公司B"></textarea>
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doBatchQuery()">查询</button>`
+  });
+}
+async function doBatchQuery() {
+  const values = document.getElementById("bqText").value.split(/[\n,，]+/).map(s => s.trim()).filter(Boolean);
+  if (!values.length) { ZhiShield.error("请输入查询内容"); return; }
+  const r = await ZhiShield.api("/api/unit/batch-query", { json: { values } });
+  if (r.code !== 0) { ZhiShield.error(r.msg); return; }
+  if (!r.data.length) { ZhiShield.info("未查询到匹配单位"); return; }
+  ZhiShield.openModal({
+    title: `查询结果（${r.data.length} 条）`,
+    size: "lg",
+    body: `<table class="data-table"><thead><tr><th>企业名称</th><th>状态</th><th>地区</th><th>ICP备案数</th></tr></thead><tbody>` +
+      r.data.map(u => `<tr><td style="font-weight:600">${ZhiShield.esc(u.enterprise_name)}</td>
+        <td>${ZhiShield.esc(u.business_status || "-")}</td>
+        <td>${ZhiShield.esc((u.province || "") + (u.city || ""))}</td>
+        <td>${u.icp_total >= 0 ? u.icp_total : "-"}</td></tr>`).join("") + "</tbody></table>",
+    footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`
+  });
+}
+
+function openIcpImport() {
+  ZhiShield.openModal({
+    title: "ICP 备案数据包导入",
+    size: "lg",
+    body: `<div style="display:flex;flex-direction:column;gap:10px">
+      <div style="font-size:13px;color:#64748b;line-height:1.8">
+        支持两种格式：<br>
+        ① 新格式：每行一个 JSON（含 query_keyword 与 result）<br>
+        ② 旧格式：每行「企业名称: {JSON 数据包}」<br>
+        导入后将更新对应单位的 ICP 备案数量，并自动同步域名资产。
+      </div>
+      <textarea class="textarea" id="icpText" rows="10" placeholder="粘贴 ICP 查询数据包，每行一条"></textarea>
+    </div>`,
+    footer: `<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+             <button class="btn btn-primary" onclick="doIcpImport()">导入</button>`
+  });
+}
+async function doIcpImport() {
+  const text = document.getElementById("icpText").value;
+  if (!text.trim()) { ZhiShield.error("请输入数据包"); return; }
+  const r = await ZhiShield.api("/api/units/import-icp", { json: { data: text } });
+  if (typeof r === "object" && r !== null) {
+    const keys = Object.keys(r);
+    if (!keys.length) { ZhiShield.info("未解析到有效数据"); }
+    else {
+      const list = keys.map(k => `<div class="kv-row"><div class="k">${ZhiShield.esc(k)}</div><div class="v">${ZhiShield.esc(r[k])}</div></div>`).join("");
+      ZhiShield.openModal({ title: "导入结果", body: `<div style="max-height:50vh;overflow-y:auto">${list}</div>`,
+        footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>` });
+    }
+    loadUnits(1);
+  }
+}
+
+loadTags();
+/* 单位列表：直接为某单位勾选/新建标签，保存后“标签”列实时同步 */
+async function openUnitTags(uid){
+  let opts=[], cur=[];
+  try{
+    const [o,c]=await Promise.all([
+      ZhiShield.api("/api/tags/options"),
+      ZhiShield.api("/api/unit/tags?unit_id="+uid)
+    ]);
+    opts=(o.code===0?o.data:[])||[];
+    cur=(c.code===0?(c.data.tag_ids||[]):[]).map(Number);
+  }catch(e){ ZhiShield.error("加载标签失败"); return; }
+  const boxes = opts.length
+    ? opts.map(t=>`<label style="display:flex;align-items:center;gap:8px;padding:7px 8px;font-size:13.5px;cursor:pointer;border-bottom:1px solid #f1f5f9">
+        <input type="checkbox" class="ut-cb" value="${t.id}" ${cur.includes(Number(t.id))?"checked":""}>
+        <span class="chip">${ZhiShield.esc(t.name)}</span></label>`).join("")
+    : '<div style="color:#94a3b8;font-size:13px;padding:10px 6px">还没有标签，在下方输入名称后点保存即可自动创建并关联</div>';
+  ZhiShield.openModal({
+    title:"设置单位标签",
+    body:`<div style="display:flex;flex-direction:column;gap:6px">
+      <div id="utBoxes" style="max-height:46vh;overflow:auto;border:1px solid #e2e8f0;border-radius:8px;padding:2px 6px">${boxes}</div>
+      <input class="input" id="utNew" placeholder="没有合适标签？输入新标签名称（可选）" style="margin-top:6px">
+    </div>`,
+    footer:`<button class="btn btn-ghost" onclick="ZhiShield.closeModal()">取消</button>
+            <button class="btn btn-primary" onclick="saveUnitTags(${uid})">保存</button>`
+  });
+}
+
+async function saveUnitTags(uid){
+  let ids=[...document.querySelectorAll('#utBoxes .ut-cb:checked')].map(x=>parseInt(x.value));
+  const newName=(document.getElementById('utNew').value||'').trim();
+  try{
+    if(newName){
+      const ar=await ZhiShield.api("/api/tags/add",{method:"POST",json:{name:newName}});
+      if(ar.code===0 && ar.tag_id){ ids.push(parseInt(ar.tag_id)); }
+      else { ZhiShield.error(ar.msg||"标签创建失败"); return; }
+    }
+    const r=await ZhiShield.api("/api/unit/set-tags",{method:"POST",json:{unit_id:uid,tag_ids:ids}});
+    if(r.code===0){ ZhiShield.success("标签已保存"); ZhiShield.closeModal(); loadUnits(curPage); }
+    else ZhiShield.error(r.msg||"保存失败");
+  }catch(e){ ZhiShield.error("保存标签失败"); }
+}
+
+loadUnits(1);
+</script>
+{% endblock %}

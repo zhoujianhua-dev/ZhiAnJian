@@ -1,0 +1,646 @@
+{% extends "base.html" %}
+{% block title %}AI 智能生成{% endblock %}
+{% block page_title %}AI 智能生成报告{% endblock %}
+{% block page_crumb %}AI 赋能 / 原始数据 → 结构化报告{% endblock %}
+
+{% block content %}
+<div class="ai-zone" style="margin-bottom:18px">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span class="ai-badge">✨ AI 赋能</span>
+    <span style="font-size:13px;color:#334155">粘贴 Nuclei / Burp / 手工记录等原始漏洞数据，AI 自动整理为规范报告并导出 Word</span>
+    <span class="spacer" style="flex:1"></span>
+    <label class="check-row"><input type="checkbox" class="input" id="aiMock" onchange="toggleMock()"> 模拟模式（无需 Key）</label>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h3>① 目标资产信息</h3></div>
+  <div class="card-body">
+    <div class="form-grid">
+      <div class="form-item"><label>单位名称</label><input class="input" id="aiUnit" placeholder="XX 科技有限公司（填已有单位可带出历史域名）"></div>
+      <div class="form-item"><label>系统名称</label><input class="input" id="aiSystem" placeholder="官网/门户网站"></div>
+      <div class="form-item"><label>漏洞地址 / URL<span style="font-weight:400;color:#0ea5e9;font-size:12px"> 自动识别域名</span></label><input class="input" id="aiAddress" placeholder="http(s)://、mqtt://、IP:端口 均可"></div>
+      <div class="form-item"><label>域名</label><input class="input" id="aiDomain" placeholder="根据地址自动填入，可手动修改"></div>
+      <div class="form-item full"><div class="unit-assist" id="aiUnitAssist"></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h3>② 原始漏洞数据</h3>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-primary btn-sm" onclick="openShellingScan()">🛰 发起漏洞扫描</button>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('scannerFile').click()">📂 导入扫描结果文件</button>
+      <input type="file" id="scannerFile" accept=".json,.jsonl,.xml,.txt,.log,.csv" style="display:none" onchange="parseScannerFile(this)">
+      <button class="btn btn-ghost btn-sm" onclick="loadSample()">载入示例</button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div id="scanInfo" style="display:none;margin-bottom:10px"></div>
+    <div class="form-grid">
+      <div class="form-item full"><label>原始发现数据（JSON 数组，Nuclei/Burp/手工格式）</label>
+        <textarea class="textarea" id="aiFindings" rows="8" placeholder='[{"source": "nuclei", "data": {"title": "SQL 注入", "severity": "high", "url": "https://...", "evidence": "..."}}]'></textarea>
+      </div>
+      <div class="form-item full"><label>或直接粘贴文本描述（可选）</label>
+        <textarea class="textarea" id="aiText" rows="4" placeholder="用自然语言描述发现的漏洞情况，AI 将自动整理"></textarea>
+      </div>
+      <div class="form-item full"><label>证据图片（可选，随原始数据一起发给 AI 辅助分析）</label>
+        <input type="file" class="input" id="aiImages" accept="image/*" multiple onchange="previewImages(this)">
+        <div id="aiImgPreview" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"></div>
+      </div>
+      <div class="form-item full"><label>检测过程图片（可选，直接附到报告“检测过程”后，支持多张）</label>
+        <div id="globalDetailImgs"></div>
+      </div>
+      <div class="form-item full"><label>归属证明图片（可选，直接附到报告“归属证明”后，支持多张）</label>
+        <div id="globalProveImgs"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+      <button class="btn btn-ghost" id="btnAnalyze" onclick="aiAnalyze()">分析预览</button>
+      <button class="btn btn-primary" id="btnGenerate" onclick="aiGenerate()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>AI 分析并生成报告
+      </button>
+      <button class="btn btn-ghost" id="btnComplete" onclick="aiComplete()">AI 润色</button>
+      <button class="btn btn-ghost" id="btnSummary" onclick="aiSummary()">AI 摘要</button>
+      <span style="font-size:12px;color:#94a3b8;align-self:center" id="aiHint"></span>
+    </div>
+  </div>
+</div>
+
+<!-- 结果区 -->
+<div class="card" id="resultCard" style="display:none">
+  <div class="card-header"><h3>③ 分析结果（可编辑后保存/导出）</h3>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-success btn-sm" onclick="saveAllFindings()">保存到报告库</button>
+      <button class="btn btn-warning btn-sm" onclick="exportFindings()">导出 Word</button>
+      <select class="select" id="resTemplate" style="width:170px">
+        <option value="normal">普通模板</option>
+        <option value="gongwen">网信办公文模板</option>
+        <option value="summary">汇总模板</option>
+      </select>
+    </div>
+  </div>
+  <div id="ragBar" style="display:none;padding:10px 18px;background:#f5f3ff;border-bottom:1px solid #ddd6fe;font-size:12.5px;color:#5b21b6"></div>
+  <div class="card-body" id="resultBody"></div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h3>导出历史</h3></div>
+  <div class="table-wrap" id="exportHistory"><div class="loading-mask"><div class="spinner"></div>加载中...</div></div>
+</div>
+{% endblock %}
+
+{% block js %}
+<script>
+let aiFindings = [], aiImages = [];
+let aiResultEditors = [];
+// 第②步的“检测过程 / 归属证明”两组多图上传区（选图即上传到服务器，getValue 返回 URL 列表）
+let globalDetailZone = null, globalProveZone = null;
+
+/* 顶部：漏洞地址自动识别域名 + 同单位历史域名/系统匹配 */
+(function bindAssetAuto() {
+  const addr = document.getElementById("aiAddress");
+  const dom = document.getElementById("aiDomain");
+  const auto = () => {
+    const h = ZhiShield.extractHost(addr.value);
+    if (h && (!dom.value.trim() || dom.dataset.auto === "1")) { dom.value = h; dom.dataset.auto = "1"; }
+  };
+  addr.addEventListener("input", auto);
+  addr.addEventListener("blur", auto);
+  dom.addEventListener("input", () => { dom.dataset.auto = "0"; });
+  document.getElementById("aiUnit").addEventListener("blur", () => setTimeout(loadAiUnitAssets, 220));
+})();
+
+async function loadAiUnitAssets() {
+  const name = (document.getElementById("aiUnit") || {}).value.trim();
+  const box = document.getElementById("aiUnitAssist");
+  if (!name) { if (box) box.innerHTML = ""; return; }
+  const r = await ZhiShield.api("/api/report/unit-assets?unit_name=" + encodeURIComponent(name));
+  if (r.code !== 0 || !r.data) { box.innerHTML = ""; return; }
+  const d = r.data;
+  let html = "";
+  if (d.domains && d.domains.length) {
+    // 只有一个历史域名且当前域名框为空时，直接自动带出，免去再点一次
+    const domBox = document.getElementById("aiDomain");
+    if (d.domains.length === 1 && !domBox.value.trim()) {
+      domBox.value = d.domains[0]; domBox.dataset.auto = "1";
+    }
+    html += '<span style="font-size:12px;color:#94a3b8;align-self:center">历史域名：</span>' +
+      d.domains.map(x => `<span class="ua-chip" data-type="domain" data-val="${ZhiShield.esc(x)}">${ZhiShield.esc(x)}</span>`).join("");
+  }
+  if (d.systems && d.systems.length) {
+    html += '<span style="font-size:12px;color:#94a3b8;align-self:center;margin-left:6px">历史系统：</span>' +
+      d.systems.slice(0, 5).map(x => `<span class="ua-chip" data-type="system" data-val="${ZhiShield.esc(x)}">${ZhiShield.esc(x)}</span>`).join("");
+  }
+  box.innerHTML = html;
+  box.querySelectorAll(".ua-chip").forEach(c => c.addEventListener("click", () => {
+    if (c.dataset.type === "domain") {
+      const dm = document.getElementById("aiDomain"); dm.value = c.dataset.val; dm.dataset.auto = "0";
+    } else {
+      document.getElementById("aiSystem").value = c.dataset.val;
+    }
+  }));
+}
+
+function toggleMock() {
+  const mock = document.getElementById("aiMock").checked;
+  document.getElementById("aiHint").textContent = mock ? "模拟模式：将返回演示数据，便于无 Key 联调" : "";
+}
+
+function getAiParams() {
+  const mock = document.getElementById("aiMock").checked;
+  const p = {
+    asset_info: {
+      unit_name: document.getElementById("aiUnit").value.trim(),
+      system_name: document.getElementById("aiSystem").value.trim(),
+      domain: document.getElementById("aiDomain").value.trim(),
+      address: document.getElementById("aiAddress").value.trim(),
+    },
+    raw_findings: aiFindings,
+    raw_text: document.getElementById("aiText").value,
+    images: aiImages,
+    detail_images: globalDetailZone ? globalDetailZone.getValue() : [],
+    prove_images: globalProveZone ? globalProveZone.getValue() : [],
+    template_key: document.getElementById("resTemplate") ? document.getElementById("resTemplate").value : "normal",
+  };
+  // 模型配置统一由「系统设置 → AI 接口配置」提供，后端会回落到该配置；仅模拟模式用约定的 mock Key
+  if (mock) p.api_key = "sk-test-mock";
+  return p;
+}
+
+function previewImages(input) {
+  const files = Array.from(input.files);
+  aiImages = [];
+  const box = document.getElementById("aiImgPreview");
+  box.innerHTML = "";
+  files.forEach(f => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      aiImages.push({ base64: e.target.result });
+      const img = document.createElement("img");
+      img.src = e.target.result;
+      img.style.cssText = "width:84px;height:60px;object-fit:cover;border-radius:8px;border:1px solid #e2e8f0";
+      box.appendChild(img);
+    };
+    reader.readAsDataURL(f);
+  });
+}
+
+async function parseScannerFile(input) {
+  const f = input.files[0];
+  if (!f) return;
+  const info = document.getElementById("scanInfo");
+  info.style.display = "";
+  info.innerHTML = `<div style="display:flex;align-items:center;gap:8px;color:var(--primary);font-size:13px"><span class="spinner" style="width:15px;height:15px"></span>正在智能解析 ${ZhiShield.esc(f.name)} ...</div>`;
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const r = await ZhiShield.api("/api/scanner/parse", { method: "POST", body: fd });
+    if (r.code !== 0) { info.innerHTML = `<span style="color:#ef4444;font-size:13px">${ZhiShield.esc(r.msg)}</span>`; return; }
+    const d = r.data;
+    document.getElementById("aiFindings").value = JSON.stringify(d.findings, null, 2);
+    aiFindings = d.findings;
+    const stats = Object.entries(d.severity_stats_cn || {}).map(([k, n]) =>
+      `<span class="badge badge-blue" style="margin-right:6px">${ZhiShield.esc(k)} × ${n}</span>`).join("");
+    info.innerHTML = `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;font-size:13px">
+      识别为 <b>${ZhiShield.esc(d.source_cn)}</b> 格式，解析出 <b>${d.count}</b> 条记录 ${stats}
+      <div style="color:#64748b;font-size:12px;margin-top:3px">已填入下方数据框，可直接点击「分析预览」</div></div>`;
+    ZhiShield.success(`解析成功：${d.source_cn}，${d.count} 条`);
+  } catch (e) {
+    info.innerHTML = `<span style="color:#ef4444;font-size:13px">解析失败：${ZhiShield.esc(e.message)}</span>`;
+  }
+  input.value = "";
+}
+
+/* ==================== 调用内置漏洞扫描引擎 ==================== */
+let shellingTimer = null, shellingBusy = false;
+
+function openShellingScan() {
+  const guess = document.getElementById("aiAddress").value.trim()
+    || document.getElementById("aiDomain").value.trim() || "";
+  ZhiShield.openModal({
+    title: "🛰 发起漏洞扫描",
+    size: "lg",
+    body: `<div class="form-grid">
+        <div class="form-item full"><label>扫描目标（域名 / IP / URL）</label>
+          <input class="input" id="shTarget" value="${ZhiShield.esc(guess)}" placeholder="10.0.5.145 或 https://example.com"></div>
+        <div class="form-item"><label>扫描类型</label>
+          <select class="select" id="shType">
+            <option value="full">全量扫描（覆盖更全面，耗时较长）</option>
+          </select></div>
+        <div class="form-item"><label>备注（可选）</label>
+          <input class="input" id="shRemark" placeholder="智安鉴发起"></div>
+      </div>
+      <div id="shProgress" style="margin-top:12px"></div>
+      <div style="margin-top:10px;font-size:12.5px;color:#64748b;line-height:1.9">
+        扫描引擎已内置在系统中，无需任何配置：完成后结果会自动转换为漏洞数据填入下方输入框，
+        可直接点击「分析预览」或「AI 分析并生成报告」。
+      </div>`,
+    footer: `<button class="btn btn-primary" id="shStartBtn" onclick="startShellingScan()">开始扫描</button>
+             <button class="btn btn-ghost" onclick="closeShellingScan()">关闭</button>`
+  });
+}
+
+function closeShellingScan() {
+  if (shellingTimer) { clearInterval(shellingTimer); shellingTimer = null; }
+  ZhiShield.closeModal();
+}
+
+async function startShellingScan() {
+  const target = (document.getElementById("shTarget").value || "").trim();
+  if (!target) { ZhiShield.error("请填写扫描目标"); return; }
+  const btn = document.getElementById("shStartBtn");
+  const box = document.getElementById("shProgress");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px"></span> 提交中...';
+  box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;color:var(--primary);font-size:13px"><span class="spinner" style="width:15px;height:15px"></span>正在提交扫描任务...</div>';
+  try {
+    const r = await ZhiShield.api("/api/scanner/shelling/start", { json: {
+      target: target,
+      scan_type: document.getElementById("shType").value,
+      remark: (document.getElementById("shRemark").value || "").trim(),
+    }});
+    if (r.code !== 0) {
+      box.innerHTML = `<div style="color:#ef4444;font-size:13px">提交失败：${ZhiShield.esc(r.msg)}</div>`;
+      btn.disabled = false; btn.innerHTML = "开始扫描";
+      return;
+    }
+    btn.innerHTML = "扫描进行中...";
+    document.getElementById("shTarget").disabled = true;
+    document.getElementById("shType").disabled = true;
+    pollShellingScan(r.data.scan_id);
+  } catch (e) {
+    box.innerHTML = `<div style="color:#ef4444;font-size:13px">提交失败：${ZhiShield.esc(e.message)}</div>`;
+    btn.disabled = false; btn.innerHTML = "开始扫描";
+  }
+}
+
+function pollShellingScan(scanId) {
+  if (shellingTimer) clearInterval(shellingTimer);
+  const tick = async () => {
+    if (shellingBusy) return;
+    shellingBusy = true;
+    try {
+      const r = await ZhiShield.api("/api/scanner/shelling/status/" + encodeURIComponent(scanId));
+      if (!r || r.code !== 0) { renderShellingProgress({ error: (r && r.msg) || "查询进度失败" }); return; }
+      renderShellingProgress(r.data);
+      if (r.data.finished) {
+        if (shellingTimer) { clearInterval(shellingTimer); shellingTimer = null; }
+        await finishShellingScan(scanId, r.data);
+      }
+    } catch (e) {
+      renderShellingProgress({ error: e.message });
+    } finally {
+      shellingBusy = false;
+    }
+  };
+  shellingTimer = setInterval(tick, 2500);
+  tick();
+}
+
+function renderShellingProgress(d) {
+  const box = document.getElementById("shProgress");
+  if (!box) return;
+  if (d.error) {
+    box.innerHTML = `<div style="color:#ef4444;font-size:13px">${ZhiShield.esc(d.error)}</div>`;
+    return;
+  }
+  const agents = (d.sub_agents || []).map(s => {
+    const pct = Math.max(0, Math.min(100, s.progress || 0));
+    return `<div style="margin-top:7px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:#475569;gap:10px">
+          <span><b>${ZhiShield.esc(s.name)}</b> · ${ZhiShield.esc(s.role)}</span>
+          <span style="white-space:nowrap">${ZhiShield.esc(s.status)}${s.findings_count ? " · 发现 " + s.findings_count : ""}</span>
+        </div>
+        <div style="height:6px;border-radius:3px;background:#e2e8f0;overflow:hidden;margin-top:3px">
+          <div style="height:100%;width:${pct}%;background:var(--primary);transition:width .4s"></div>
+        </div>
+      </div>`;
+  }).join("");
+  box.innerHTML = `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;font-size:13px">
+      <div style="display:flex;justify-content:space-between;gap:10px">
+        <b>${ZhiShield.esc(d.status_cn || d.status)}</b>
+        <span style="color:#64748b;font-size:12px">阶段：${ZhiShield.esc(d.phase || "-")}</span>
+      </div>
+      <div style="color:#475569;font-size:12px;margin-top:2px">${ZhiShield.esc(d.message || "")}</div>
+      ${agents}
+    </div>`;
+}
+
+async function finishShellingScan(scanId, progress) {
+  const btn = document.getElementById("shStartBtn");
+  const box = document.getElementById("shProgress");
+  if (progress && !progress.ok) {
+    if (btn) { btn.disabled = false; btn.innerHTML = "重新扫描"; }
+    ["shTarget", "shType"].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = false; });
+    ZhiShield.error("扫描未成功完成：" + (progress.status_cn || progress.status));
+    return;
+  }
+  if (box) box.innerHTML += '<div style="margin-top:8px;font-size:13px;color:var(--primary)">扫描完成，正在获取漏洞结果...</div>';
+  try {
+    const r = await ZhiShield.api("/api/scanner/shelling/result/" + encodeURIComponent(scanId));
+    if (r.code !== 0) { ZhiShield.error("获取结果失败：" + r.msg); return; }
+    applyShellingResult(r.data);
+    closeShellingScan();
+  } catch (e) { ZhiShield.error("获取结果失败：" + e.message); }
+}
+
+function applyShellingResult(d) {
+  document.getElementById("aiFindings").value = JSON.stringify(d.findings, null, 2);
+  aiFindings = d.findings;
+  // 目标资产信息为空时自动带入，省去手工填写
+  const addrBox = document.getElementById("aiAddress");
+  if (!addrBox.value.trim() && d.target) {
+    addrBox.value = /^[a-z]+:\/\//i.test(d.target) ? d.target : "http://" + d.target;
+    const h = ZhiShield.extractHost(addrBox.value);
+    const domBox = document.getElementById("aiDomain");
+    if (h && !domBox.value.trim()) { domBox.value = h; domBox.dataset.auto = "1"; }
+  }
+  const info = document.getElementById("scanInfo");
+  info.style.display = "";
+  const stats = Object.entries(d.severity_stats_cn || {}).map(([k, n]) =>
+    `<span class="badge badge-blue" style="margin-right:6px">${ZhiShield.esc(k)} × ${n}</span>`).join("");
+  const summary = d.llm_summary
+    ? `<div style="color:#5b21b6;font-size:12px;margin-top:4px">AI 摘要：${ZhiShield.esc(d.llm_summary)}</div>` : "";
+  info.innerHTML = `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;font-size:13px">
+      已获取目标 <b>${ZhiShield.esc(d.target)}</b> 的${ZhiShield.esc(d.scan_type_cn || "扫描")}结果，
+      共 <b>${d.count}</b> 条 ${stats}
+      <div style="color:#64748b;font-size:12px;margin-top:3px">已填入下方数据框，可直接点击「分析预览」或「AI 分析并生成报告」</div>
+      ${summary}</div>`;
+  ZhiShield.success(`扫描完成，获取 ${d.count} 条漏洞数据`);
+}
+
+function loadSample() {
+  document.getElementById("aiUnit").value = "演示科技有限公司";
+  document.getElementById("aiSystem").value = "业务管理系统";
+  document.getElementById("aiDomain").value = "demo-tech.com";
+  document.getElementById("aiAddress").value = "https://demo-tech.com/login.php";
+  document.getElementById("aiFindings").value = JSON.stringify([
+    { source: "nuclei", data: { title: "SQL 注入漏洞", severity: "high", url: "https://demo-tech.com/login.php", evidence: "参数 id 存在报错注入，AND 1=1 返回正常" } },
+    { source: "manual", data: { title: "敏感信息泄露", severity: "medium", url: "https://demo-tech.com/.git/config", evidence: "可直接访问 .git 目录，泄露源码" } }
+  ], null, 2);
+  ZhiShield.success("示例数据已载入，可点击「分析预览」");
+}
+
+async function aiAnalyze() {
+  const btn = document.getElementById("btnAnalyze");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner" style="width:14px;height:14px"></span> 分析中...';
+  try {
+    parseFindings();
+    const p = getAiParams();
+    const r = await ZhiShield.api("/api/ai/analyze", { json: p });
+    if (r.code === 0) {
+      renderResults(r.data.findings);
+      const kn = r.data.knowledge || [];
+      const knBar = document.getElementById("ragBar");
+      if (knBar) {
+        knBar.style.display = kn.length ? "" : "none";
+        knBar.innerHTML = kn.length
+          ? "🧠 RAG 已参考本地漏洞库：" + kn.map(k => `<span class="chip">${ZhiShield.esc(k.name)}（${ZhiShield.esc(k.severity || "未知")}）</span>`).join("")
+          : "";
+      }
+      if (r.data.mock) ZhiShield.info("当前为模拟模式结果");
+      else ZhiShield.success("AI 分析完成");
+    } else ZhiShield.error(r.msg);
+  } catch (e) { ZhiShield.error("分析失败：" + e.message); }
+  btn.disabled = false; btn.innerHTML = "分析预览";
+}
+
+function parseFindings() {
+  const text = document.getElementById("aiFindings").value.trim();
+  if (!text) { aiFindings = []; return; }
+  try { aiFindings = JSON.parse(text); }
+  catch (e) { aiFindings = [{ source: "manual", data: { title: "", description: text.slice(0, 800) } }]; }
+}
+
+async function aiGenerate() {
+  const btn = document.getElementById("btnGenerate");
+  btn.disabled = true;
+  const orig = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner" style="width:14px;height:14px"></span> AI 生成中（约需 10-60 秒）...';
+  try {
+    parseFindings();
+    const p = getAiParams();
+    const r = await ZhiShield.api("/api/ai/generate", { json: p });
+    if (r.code === 0) {
+      ZhiShield.success(`生成成功，共 ${r.records_created} 条报告`);
+      renderResultsFromUrl(r);
+      setTimeout(() => { window.location.href = r.url; }, 500);
+    } else ZhiShield.error(r.msg);
+  } catch (e) { ZhiShield.error("生成失败：" + e.message); }
+  btn.disabled = false; btn.innerHTML = orig;
+}
+
+async function aiComplete() {
+  const p = getAiParams();
+  p.existing_values = {
+    vul_name: document.getElementById("aiFindings").value.trim().slice(0, 100) || "SQL 注入漏洞",
+  };
+  const r = await ZhiShield.api("/api/ai/complete", { json: p });
+  if (r.code === 0) {
+    const d = r.data;
+    ZhiShield.openModal({
+      title: "AI 润色结果", size: "lg",
+      body: `<div class="form-grid">
+        <div class="form-item full"><label>漏洞描述</label><textarea class="textarea" rows="3">${ZhiShield.esc(d.description || "")}</textarea></div>
+        <div class="form-item full"><label>危害分析</label><textarea class="textarea" rows="2">${ZhiShield.esc(d.harm || "")}</textarea></div>
+        <div class="form-item full"><label>整改建议</label><textarea class="textarea" rows="3">${ZhiShield.esc(d.suggestion || "")}</textarea></div>
+      </div>`,
+      footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>`
+    });
+  } else ZhiShield.error(r.msg);
+}
+
+async function aiSummary() {
+  if (!aiFindings.length && !document.getElementById("aiText").value.trim()) {
+    ZhiShield.error("请先填写漏洞数据"); return;
+  }
+  const p = getAiParams();
+  p.findings = aiFindings.length ? aiFindings : [{ source: "text", data: { title: "漏洞" } }];
+  const r = await ZhiShield.api("/api/ai/summarize", { json: p });
+  if (r.code === 0) {
+    ZhiShield.openModal({ title: "AI 总结", size: "",
+      body: `<div style="line-height:1.9;font-size:14px">${ZhiShield.esc(r.data.summary)}</div>`,
+      footer: `<button class="btn btn-primary" onclick="ZhiShield.closeModal()">关闭</button>` });
+  } else ZhiShield.error(r.msg);
+}
+
+/* 渲染分析结果（可编辑） */
+function renderResults(findings) {
+  const card = document.getElementById("resultCard");
+  card.style.display = "";
+  let html = "";
+  findings.forEach((f, i) => {
+    html += `<div style="border:1px solid #e2e8f0;border-radius:12px;margin-bottom:14px;overflow:hidden">
+      <div style="background:#f8fafc;padding:10px 14px;font-weight:700;font-size:13px;display:flex;gap:10px;align-items:center">
+        <span class="badge badge-blue">漏洞 ${i + 1}</span>
+        <input class="input" id="f_${i}_vul_name" value="${ZhiShield.esc(f.vul_name)}" style="flex:1;background:#fff">
+        <select class="select" id="f_${i}_severity" style="width:110px">
+          ${["critical","high","medium","low","info","unknown"].map(s =>
+            `<option value="${s}" ${f.severity===s?"selected":""}>${({critical:"严重",high:"高危",medium:"中危",low:"低危",info:"信息",unknown:"未知"})[s]}</option>`).join("")}
+        </select>
+      </div>
+      <div class="form-grid" style="padding:14px">
+        <div class="form-item full"><label>漏洞地址</label><input class="input" id="f_${i}_address" value="${ZhiShield.esc(f.address)}"></div>
+        <div class="form-item full"><label>漏洞描述</label><textarea class="textarea" id="f_${i}_description" rows="3">${ZhiShield.esc(f.description)}</textarea></div>
+        <div class="form-item full"><label>危害分析</label><textarea class="textarea" id="f_${i}_harm" rows="2">${ZhiShield.esc(f.harm)}</textarea></div>
+        <div class="form-item full"><label>检测过程（富文本，可插图）</label>
+          <textarea class="textarea" id="f_${i}_detail" rows="3" style="display:none">${ZhiShield.esc(f.detail)}</textarea>
+          <div id="f_${i}_detail_imgs"></div>
+        </div>
+        <div class="form-item full"><label>整改建议</label><textarea class="textarea" id="f_${i}_suggestion" rows="3">${ZhiShield.esc(f.suggestion)}</textarea></div>
+        <div class="form-item full"><label>归属证明（富文本，可插图）</label>
+          <textarea class="textarea" id="f_${i}_prove" rows="2" style="display:none">${ZhiShield.esc(f.prove)}</textarea>
+          <div id="f_${i}_prove_imgs"></div>
+        </div>
+      </div></div>`;
+  });
+  document.getElementById("resultBody").innerHTML = html;
+  // 逐条初始化富文本编辑器与两个独立多图区
+  aiResultEditors = [];
+  findings.forEach((f, i) => {
+    aiResultEditors[i] = {
+      detail: ZhiShield.rteInit(document.getElementById(`f_${i}_detail`)),
+      prove: ZhiShield.rteInit(document.getElementById(`f_${i}_prove`)),
+      detailImgs: ZhiShield.imageZone(document.getElementById(`f_${i}_detail_imgs`),
+        { value: [], hint: "检测过程图片（多张，导出附在检测过程后）" }),
+      proveImgs: ZhiShield.imageZone(document.getElementById(`f_${i}_prove_imgs`),
+        { value: [], hint: "归属证明图片（多张，导出附在归属证明后）" }),
+    };
+  });
+}
+
+function collectFindings() {
+  // 每条漏洞渲染时必有且仅有一个 f_{i}_vul_name 输入框，以此准确统计条目数
+  const anchors = document.querySelectorAll("#resultBody [id^='f_'][id$='_vul_name']");
+  const indexes = Array.from(anchors).map(el => {
+    const m = el.id.match(/^f_(\d+)_vul_name$/);
+    return m ? parseInt(m[1]) : -1;
+  }).filter(n => n >= 0);
+  const count = new Set(indexes).size;
+  const list = [];
+  const val = (id) => { const e = document.getElementById(id); return e ? e.value : ""; };
+  for (let i = 0; i < count; i++) {
+    list.push({
+      vul_name: val(`f_${i}_vul_name`),
+      severity: val(`f_${i}_severity`),
+      address: val(`f_${i}_address`),
+      description: val(`f_${i}_description`),
+      harm: val(`f_${i}_harm`),
+      detail: aiResultEditors[i] ? aiResultEditors[i].detail.getValue() : val(`f_${i}_detail`),
+      detail_images: aiResultEditors[i] ? aiResultEditors[i].detailImgs.getValue() : [],
+      suggestion: val(`f_${i}_suggestion`),
+      prove: aiResultEditors[i] ? aiResultEditors[i].prove.getValue() : val(`f_${i}_prove`),
+      prove_images: aiResultEditors[i] ? aiResultEditors[i].proveImgs.getValue() : [],
+      unit_name: document.getElementById("aiUnit").value.trim(),
+      system_name: document.getElementById("aiSystem").value.trim(),
+      domain: document.getElementById("aiDomain").value.trim(),
+    });
+  }
+  return list.filter(f => f.vul_name && f.vul_name.trim());
+}
+
+async function saveAllFindings() {
+  const list = collectFindings();
+  let ok = 0;
+  for (const f of list) {
+    const r = await ZhiShield.api("/api/report/add", { json: f });
+    if (r.code === 0) ok++;
+  }
+  ZhiShield.success(`已保存 ${ok} 条报告到报告库`);
+}
+
+async function exportFindings() {
+  const list = collectFindings();
+  const unit = document.getElementById("aiUnit").value.trim();
+  if (!list.length) { ZhiShield.error("没有可导出的结果"); return; }
+  // 先入库拿到 id，再走统一导出
+  const ids = [];
+  for (const f of list) {
+    const r = await ZhiShield.api("/api/report/add", { json: f });
+    if (r.code === 0) ids.push(r.id);
+  }
+  const tplKey = document.getElementById("resTemplate").value;
+  const r = await ZhiShield.api("/api/report/export", { json: { report_ids: ids, template_key: tplKey, template_id: "", org_footer: "" } });
+  if (r.code === 0) {
+    ZhiShield.success("导出成功");
+    setTimeout(() => { window.location.href = r.url; }, 400);
+  } else ZhiShield.error(r.msg);
+}
+
+function renderResultsFromUrl(r) {
+  const card = document.getElementById("resultCard");
+  card.style.display = "";
+  card.querySelector("h3").textContent = "生成完成 ✔ 报告文件：" + r.filename;
+  document.getElementById("resultBody").innerHTML =
+    `<div style="text-align:center;padding:20px;color:#16a34a;font-weight:700">
+      已生成 <b>${r.records_created}</b> 条报告并导出 Word<br>
+      <a href="${r.url}" class="btn btn-primary" style="margin-top:12px">立即下载</a>
+    </div>`;
+}
+
+async function loadExportHistory() {
+  const el = document.getElementById("exportHistory");
+  const r = await ZhiShield.api("/api/report/exports");
+  if (!r.code === 0) return;
+  if (!r.data.length) {
+    el.innerHTML = `<div style="text-align:center;padding:18px;color:#94a3b8;font-size:13px">暂无导出记录</div>`;
+    return;
+  }
+  let html = `<table class="data-table"><thead><tr><th>文件名</th><th>大小</th><th>导出时间</th><th>操作</th></tr></thead><tbody>`;
+  r.data.forEach(f => {
+    html += `<tr>
+      <td style="font-weight:600;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ZhiShield.esc(f.filename)}</td>
+      <td>${(f.size / 1024).toFixed(1)} KB</td>
+      <td style="color:#94a3b8;font-size:12px">${ZhiShield.fmtTime(f.mtime)}</td>
+      <td><a class="link-btn" href="/api/report/download/${encodeURIComponent(f.filename)}">下载</a></td></tr>`;
+  });
+  el.innerHTML = html + "</tbody></table>";
+}
+
+/* 从「AI 漏洞扫描」页带过来的扫描结果（sessionStorage）：自动填入第②步并提示 */
+function consumeScanHandoff() {
+  let raw = null;
+  try { raw = sessionStorage.getItem("zhianjian_scan_handoff"); } catch (e) { return; }
+  if (!raw) return;
+  try { sessionStorage.removeItem("zhianjian_scan_handoff"); } catch (e) {}
+  let d = null;
+  try { d = JSON.parse(raw); } catch (e) { return; }
+  if (!d || !Array.isArray(d.findings)) return;
+
+  aiFindings = d.findings;
+  document.getElementById("aiFindings").value = JSON.stringify(d.findings, null, 2);
+  // 目标资产信息为空时自动带入，省去手工填写
+  const addrBox = document.getElementById("aiAddress");
+  if (d.target && !addrBox.value.trim()) {
+    addrBox.value = /^[a-z]+:\/\//i.test(d.target) ? d.target : "http://" + d.target;
+    const h = ZhiShield.extractHost(addrBox.value);
+    const domBox = document.getElementById("aiDomain");
+    if (h && !domBox.value.trim()) { domBox.value = h; domBox.dataset.auto = "1"; }
+  }
+  const info = document.getElementById("scanInfo");
+  if (info) {
+    info.style.display = "";
+    const stats = Object.entries(d.severity_stats_cn || {}).map(([k, n]) =>
+      `<span class="badge badge-blue" style="margin-right:6px">${ZhiShield.esc(k)} × ${n}</span>`).join("");
+    const summary = d.llm_summary
+      ? `<div style="color:#5b21b6;font-size:12px;margin-top:4px">AI 摘要：${ZhiShield.esc(d.llm_summary)}</div>` : "";
+    info.innerHTML = `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 14px;font-size:13px">
+        已从「AI 漏洞扫描」带入目标 <b>${ZhiShield.esc(d.target || "-")}</b> 的扫描结果，
+        共 <b>${d.findings.length}</b> 条 ${stats}
+        <div style="color:#64748b;font-size:12px;margin-top:3px">已填入下方数据框，可直接点击「分析预览」或「AI 分析并生成报告」</div>
+        ${summary}</div>`;
+  }
+  ZhiShield.success(`已带入扫描结果 ${d.findings.length} 条`);
+}
+
+// 初始化第②步两组多图上传区（点击/拖拽均可，选图即上传，可排序、可删除）
+globalDetailZone = ZhiShield.imageZone(document.getElementById("globalDetailImgs"),
+  { value: [], hint: "检测过程图片（多张，导出附在检测过程之后）" });
+globalProveZone = ZhiShield.imageZone(document.getElementById("globalProveImgs"),
+  { value: [], hint: "归属证明图片（多张，导出附在归属证明之后）" });
+
+consumeScanHandoff();
+loadExportHistory();
+</script>
+{% endblock %}

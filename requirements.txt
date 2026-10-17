@@ -1,0 +1,18 @@
+# 智安鉴 · 智能安全检测与漏洞报告系统
+# 安装：py -3.10 -m pip install -r requirements.txt
+# Python 3.10+（推荐 3.10 / 3.11）
+Flask==3.1.0
+python-docx>=1.1.0
+docxtpl>=0.20.1
+docxcompose>=1.4.0
+openpyxl>=3.1.2
+pandas>=2.0.0
+beautifulsoup4>=4.12.0
+tldextract>=5.0.0
+requests>=2.31.0
+# 第二轮新增
+reportlab>=4.0.0        # PDF 报告导出（中文）
+python-pptx>=0.6.23     # 作品展示 PPT 生成（交付材料工具链）
+
+PyMuPDF>=1.24.0
+Pillow>=10.0.0

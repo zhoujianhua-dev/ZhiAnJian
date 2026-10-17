@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ code }}{% endblock %}
+{% block page_title %}出错了{% endblock %}
+{% block page_crumb %}错误页{% endblock %}
+
+{% block content %}
+<div class="card" style="text-align:center;padding:60px 20px">
+  <div style="font-size:64px;font-weight:900;background:linear-gradient(135deg,var(--primary),#7c3aed);-webkit-background-clip:text;-webkit-text-fill-color:transparent">{{ code }}</div>
+  <div style="font-size:17px;font-weight:700;margin:12px 0 6px">{{ msg }}</div>
+  <div style="color:#94a3b8;font-size:13px;margin-bottom:22px">请检查访问地址，或返回首页继续操作</div>
+  <a class="btn btn-primary" href="/">返回首页</a>
+</div>
+{% endblock %}
