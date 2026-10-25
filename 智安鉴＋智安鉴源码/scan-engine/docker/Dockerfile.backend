@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install minimal system dependencies (no scanning tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # 基础工具（仅保留必要的）
+    curl \
+    wget \
+    # 网络诊断工具（backend可能需要）
+    netcat-openbsd \
+    dnsutils \
+    && rm -rf /var/lib/apt/lists/* \
+    # 创建数据目录
+    && mkdir -p /app/data
+
+# 注意：所有扫描工具已移至 Kali 容器
+# Backend 只负责业务逻辑，不执行扫描
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips", "*"]

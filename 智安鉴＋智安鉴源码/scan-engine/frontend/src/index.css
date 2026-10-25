@@ -1,0 +1,170 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap');
+
+:root {
+  --font-display: "Space Grotesk", "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-body: "Source Sans 3", "Segoe UI", "Helvetica Neue", sans-serif;
+  --shell-bg: #eff5fb;
+  --shell-bg-dark: #040b18;
+  --shell-panel: rgba(255, 255, 255, 0.82);
+  --shell-panel-dark: rgba(8, 15, 28, 0.78);
+  --shell-border: rgba(148, 163, 184, 0.22);
+  --shell-border-dark: rgba(148, 163, 184, 0.16);
+  --shell-shadow: 0 22px 70px rgba(15, 23, 42, 0.12);
+  --shell-shadow-dark: 0 30px 90px rgba(2, 8, 23, 0.48);
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background:
+      radial-gradient(circle at top left, rgba(125, 211, 252, 0.25), transparent 30%),
+      linear-gradient(180deg, #f6fbff 0%, #edf3f9 45%, #e8eef5 100%);
+    color-scheme: light;
+  }
+
+  body {
+    @apply text-gray-900 antialiased transition-colors duration-200;
+    font-family: var(--font-body);
+    background: transparent;
+    min-height: 100vh;
+  }
+
+  .dark body,
+  html.dark body {
+    @apply text-gray-100;
+    background: transparent;
+  }
+
+  html.dark {
+    background:
+      radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 28%),
+      radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.12), transparent 24%),
+      linear-gradient(180deg, #08111f 0%, #050c17 56%, #020611 100%);
+    color-scheme: dark;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.42);
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.58);
+    background-clip: padding-box;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  ::selection {
+    background: rgba(14, 165, 233, 0.18);
+    color: inherit;
+  }
+}
+
+@layer components {
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .app-shell::before {
+    content: "";
+    position: absolute;
+    inset: 24px;
+    border-radius: 36px;
+    border: 1px solid rgba(255, 255, 255, 0.26);
+    pointer-events: none;
+  }
+
+  .dark .app-shell::before {
+    border-color: rgba(148, 163, 184, 0.08);
+  }
+
+  .page-stage > div > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .page-stage h1,
+  .page-stage h2,
+  .page-stage h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.03em;
+  }
+
+  .page-stage table {
+    border-color: rgba(148, 163, 184, 0.18);
+  }
+
+  .page-stage thead {
+    backdrop-filter: blur(10px);
+  }
+}
+
+@layer utilities {
+  .glass-card {
+    background: var(--shell-panel);
+    border: 1px solid var(--shell-border);
+    box-shadow: var(--shell-shadow);
+    backdrop-filter: blur(18px);
+  }
+
+  .dark .glass-card {
+    background: var(--shell-panel-dark);
+    border-color: var(--shell-border-dark);
+    box-shadow: var(--shell-shadow-dark);
+  }
+
+  .panel-outline {
+    border: 1px solid rgba(255, 255, 255, 0.45);
+  }
+
+  .dark .panel-outline {
+    border-color: rgba(148, 163, 184, 0.12);
+  }
+}
+
+@keyframes rise {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  0% {
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}

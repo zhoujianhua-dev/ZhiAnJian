@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.git/
+.deploy-commit
+config.json
+data/
+scan-engine/
+frontend/node_modules/
+frontend/dist/

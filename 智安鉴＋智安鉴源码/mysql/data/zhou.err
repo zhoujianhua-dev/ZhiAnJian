@@ -1,0 +1,5 @@
+2026-10-25T03:57:06.528146Z 0 [System] [MY-013169] [Server] D:\zhou\其他数据\除其他工具数据外的数据\作品赛最终汇总\自主命题+智安鉴+鉴锋战队+省赛参赛作品终稿\ZhiAnDun-main\mysql\bin\mysqld.exe (mysqld 8.0.28) initializing of server in progress as process 36716
+2026-10-25T03:57:06.575556Z 1 [System] [MY-013576] [InnoDB] InnoDB initialization has started.
+2026-10-25T03:57:06.983132Z 1 [System] [MY-013577] [InnoDB] InnoDB initialization has ended.
+2026-10-25T03:57:07.651130Z 0 [Warning] [MY-013829] [Server] Missing data directory for ICU regular expressions: D:\zhou\其他数据\除其他工具数据外的数据\作品赛最终汇总\自主命题+智安鉴+鉴锋战队+省赛参赛作品终稿\ZhiAnDun-main\mysql\lib\private\.
+2026-10-25T03:57:08.554220Z 5 [Warning] [MY-010453] [Server] root@localhost is created with an empty password ! Please consider switching off the --initialize-insecure option.

@@ -1,0 +1,55 @@
+# ==================== Python ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ==================== 实例配置 ====================
+# config.json 保存 AI API Key 与 Shelling 平台账号密码，不入库。
+# 首次部署请复制模板：cp config.example.json config.json
+config.json
+
+# ==================== 运行时数据 ====================
+# 数据库已迁移到 MySQL（容器卷），此处保留旧版 SQLite 文件忽略规则，
+# 仅用于 `scripts/migrate_sqlite_to_mysql.py` 的一次性迁移来源。
+data/zhianjian.db
+data/zhianjian.db-journal
+data/zhianjian.db-wal
+data/zhianjian.db-shm
+data/exports/
+data/uploads/
+data/ai_images/
+
+# ==================== 编辑器 / 系统 ====================
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==================== 临时文件 ====================
+*.orig
+*.bak
+*.log
+
+
+# ==================== 扫描引擎（scan-engine）本地文件 ====================
+# .env 含 SECRET_KEY / JWT_SECRET_KEY / 数据库连接串，不入库；参考 .env.example
+scan-engine/backend/.env
+scan-engine/**/__pycache__/
+scan-engine/**/*.py[cod]
+scan-engine/frontend/node_modules/
+scan-engine/frontend/dist/
+scan-engine/**/*.orig
+scan-engine/**/*.bak-*
+scan-engine/backend/data/
+
+# ==================== 主站前端（React） ====================
+# 源码在 frontend/；node_modules 不入库。
+# 构建产物 static/app/ 需要入库：Windows 双击「启动智安鉴.bat」只跑 Python，没有 Node 构建环境。
+frontend/node_modules/
+frontend/dist/

@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   智安鉴 · 现代扁平设计系统
+   - 纯色块 + 1px 描边 + 极小阴影，无渐变、无毛玻璃
+   - 主色由「系统设置 → 主题色」在运行时注入（见 lib/theme.ts）
+   ============================================================ */
+:root {
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-soft: #eff4ff;
+  --primary-line: #c7d7fe;
+
+  --canvas: #f6f7f9;
+  --surface: #ffffff;
+  --line: #e6e8ec;
+  --line-strong: #d4d8de;
+  --muted: #6b7280;
+}
+
+* {
+  border-color: var(--line);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: #1e293b;
+  font-size: 14px;
+  line-height: 1.55;
+  font-family: theme('fontFamily.sans');
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 数字统一等宽，表格/统计不跳动 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4d8de;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b8bec7;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 富文本渲染（检测过程 / 归属证明） */
+.rich-text {
+  font-size: 13.5px;
+  line-height: 1.75;
+  word-break: break-word;
+}
+.rich-text p {
+  margin: 0 0 6px;
+}
+.rich-text h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 10px 0 6px;
+}
+.rich-text ul,
+.rich-text ol {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+}
+.rich-text ul {
+  list-style: disc;
+}
+.rich-text ol {
+  list-style: decimal;
+}
+.rich-text code {
+  background: #f1f5f9;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: theme('fontFamily.mono');
+  font-size: 12.5px;
+}
+.rich-text img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  margin: 4px 0;
+}
+.rich-text a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+/* 内容区富文本编辑器 */
+[contenteditable='true']:empty::before {
+  content: attr(data-placeholder);
+  color: #9aa3af;
+}
+
+/* 打印（报告预览页可选） */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

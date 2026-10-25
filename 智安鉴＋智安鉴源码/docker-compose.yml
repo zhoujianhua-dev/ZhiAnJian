@@ -1,0 +1,263 @@
+name: zhianjian
+
+# 智安鉴 + 内置漏洞扫描引擎（原 Shelling）一体化编排
+# 代码全部来自本仓库：根目录=智安鉴(Flask/8080)，scan-engine/=扫描引擎(FastAPI/Celery/Kali/Vite)
+# 数据：智安鉴业务数据存 MySQL（mysql_data 卷），导出文件/图片/背景图仍在 ./data；
+#       引擎用下面显式命名的卷（沿用历史卷名，绝不新建空卷）
+services:
+
+  # ---------------- 智安鉴（业务系统）----------------
+  zhianjian:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zhianjian:latest
+    container_name: zhianjian
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - ZS_HOST=0.0.0.0
+      - ZS_PORT=8080
+      - ZS_NO_BROWSER=1
+      - TZ=Asia/Shanghai
+      - ZS_DB_HOST=mysql
+      - ZS_DB_PORT=3306
+      - ZS_DB_NAME=${MYSQL_DATABASE:-zhianjian}
+      - ZS_DB_USER=${MYSQL_USER:-zhianjian}
+      - ZS_DB_PASSWORD=${MYSQL_PASSWORD:-zhianjian_pass_2026}
+    volumes:
+      - ./data:/app/data
+      - ./config.json:/app/config.json
+    networks:
+      - app_network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  # ---------------- 智安鉴 业务数据库（MySQL 8）----------------
+  mysql:
+    image: mysql:8.0
+    container_name: zhianjian-mysql
+    restart: always
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-zhianjian_root_2026}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-zhianjian}
+      MYSQL_USER: ${MYSQL_USER:-zhianjian}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-zhianjian_pass_2026}
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # ---------------- 扫描引擎：数据库与缓存 ----------------
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: vulnscanner
+      POSTGRES_INITDB_ARGS: "-c listen_addresses='*'"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  mongodb:
+    image: mongo:7
+    restart: always
+    command: ["mongod", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------- 扫描引擎：后端 API ----------------
+  backend:
+    build:
+      context: ./scan-engine/backend
+      dockerfile: ../docker/Dockerfile.backend
+    image: docker-backend:latest
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/vulnscanner
+      - MONGODB_URL=mongodb://mongodb:27017
+      - REDIS_URL=redis://redis:6379/0
+      - KALI_SCANNER_URL=http://kali_scanner:8888
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      kali_scanner:
+        condition: service_healthy
+    volumes:
+      - ./scan-engine/backend:/app
+      - tools_data:/app/data/tools
+    networks:
+      - app_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  celery_worker:
+    build:
+      context: ./scan-engine/backend
+      dockerfile: ../docker/Dockerfile.backend
+    image: docker-celery_worker:latest
+    restart: always
+    environment:
+      - POSTGRES_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/vulnscanner
+      - MONGODB_URL=mongodb://mongodb:27017
+      - REDIS_URL=redis://redis:6379/0
+      - KALI_SCANNER_URL=http://kali_scanner:8888
+    depends_on:
+      - redis
+      - postgres
+      - mongodb
+      - kali_scanner
+    volumes:
+      - ./scan-engine/backend:/app
+      - tools_data:/app/data/tools
+    networks:
+      - app_network
+    command: celery -A tasks.celery_app worker --loglevel=info
+
+  # ---------------- 扫描引擎：Kali 工具容器 ----------------
+  kali_scanner:
+    build:
+      context: ./scan-engine/docker
+      dockerfile: Dockerfile.kali
+    image: docker-kali_scanner:latest
+    restart: always
+    ports:
+      - "8888:8888"
+    volumes:
+      - kali_tools:/scanner/tools
+      - kali_output:/scanner/output
+      - kali_logs:/scanner/logs
+      - kali_tmp:/scanner/tmp
+      - tools_data:/app/data/tools
+    networks:
+      - app_network
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ---------------- 扫描引擎：前端 ----------------
+  frontend:
+    build:
+      context: ./scan-engine/frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    image: docker-frontend:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./scan-engine/frontend:/app
+      - frontend_node_modules:/app/node_modules
+    environment:
+      - VITE_API_URL=/api/v1
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - app_network
+    command: sh -c "npm install && npm run dev -- --host"
+
+networks:
+  app_network:
+    driver: bridge
+
+# 显式绑定历史卷名：合并部署不会新建空卷，引擎里已有的扫描任务/用户/配置全部沿用
+volumes:
+  # 以下 9 个卷是引擎历史数据卷（27 条扫描任务、账号、LLM 配置等），标记 external：
+  # compose 不会创建也不会删除它们，即使误用 down -v 也删不掉数据。
+  # 换新机器首次部署时先执行 scan-engine/init-volumes.sh。
+  postgres_data:
+    external: true
+    name: docker_postgres_data
+  mongodb_data:
+    external: true
+    name: docker_mongodb_data
+  redis_data:
+    external: true
+    name: docker_redis_data
+  tools_data:
+    external: true
+    name: docker_tools_data
+  kali_tools:
+    external: true
+    name: docker_kali_tools
+  kali_output:
+    external: true
+    name: docker_kali_output
+  kali_logs:
+    external: true
+    name: docker_kali_logs
+  kali_tmp:
+    external: true
+    name: docker_kali_tmp
+  frontend_node_modules:
+    external: true
+    name: 64ddc45c45d758fe80da5d361408c05a4dce5a9a75eb95eca1e215696d61e6a7
+  # 智安鉴业务库（MySQL）：compose 自建卷，首次启动自动初始化
+  mysql_data:
+    name: zhianjian_mysql_data

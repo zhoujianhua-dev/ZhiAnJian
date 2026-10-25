@@ -1,0 +1,166 @@
+FROM kalilinux/kali-rolling
+
+WORKDIR /scanner
+
+# 使用清华大学镜像源
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    apt-get update
+
+# 使用国内 PyPI 镜像，提升依赖安装可靠性
+RUN pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip3 config set global.trusted-host pypi.tuna.tsinghua.edu.cn || true
+
+# 安装基础工具和 Metasploit
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    # 基础系统工具
+    curl \
+    wget \
+    git \
+    unzip \
+    # Python 环境
+    python3-pip \
+    # ======== 核心扫描工具 ========
+    # 网络扫描与资产识别
+    nmap \
+    masscan \
+    whatweb \
+    # 漏洞扫描与组件分析
+    nuclei \
+    nikto \
+    wapiti \
+    lynis \
+    # Web/API 测试
+    sqlmap \
+    gobuster \
+    dirb \
+    wfuzz \
+    sslscan \
+    # 凭证与身份验证
+    hydra \
+    # 补充扫描工具（Kali 源直接提供，避免 GitHub/Go 下载失败）
+    rustscan \
+    trivy \
+    naabu \
+    katana \
+    feroxbuster \
+    subjack \
+    # 网络工具
+    netcat-traditional \
+    dnsutils \
+    whois \
+    iproute2 \
+    iputils-ping \
+    traceroute \
+    # Metasploit Framework
+    metasploit-framework \
+    postgresql \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建工作目录
+RUN mkdir -p /scanner/tools /scanner/output /scanner/logs /scanner/tmp /app/data/tools
+
+# 预下载 nuclei templates（持久化规则库）
+RUN nuclei -update-templates -ut || nuclei -update-templates || true
+
+# 验证模板已下载
+RUN test -d /root/nuclei-templates || echo "Warning: Nuclei templates directory not found"
+
+# 安装 Go 工具链（用于安装 Go 工具）
+RUN (wget -q -T 60 https://mirrors.aliyun.com/golang/go1.26.8.linux-amd64.tar.gz -O /tmp/go.tar.gz || \
+     wget -q -T 60 https://golang.google.cn/dl/go1.26.8.linux-amd64.tar.gz -O /tmp/go.tar.gz || \
+     wget -q -T 60 https://dl.google.com/go/go1.26.8.linux-amd64.tar.gz -O /tmp/go.tar.gz) && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm /tmp/go.tar.gz
+ENV PATH=$PATH:/usr/local/go/bin:/root/go/bin
+ENV GOPROXY=https://goproxy.cn,direct
+
+# 安装 Go 工具
+RUN go install github.com/projectdiscovery/httpx/cmd/httpx@latest || true && \
+    go install github.com/ffuf/ffuf/v2@latest || true && \
+    go install github.com/OJ/gobuster/v3@latest || true && \
+    go install github.com/tomnomnom/anew@latest || true
+
+# RustScan / Trivy 改由 Kali apt 源安装（见上方 apt-get install 列表）
+
+# 安装 Grype
+RUN curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin || true
+
+# 安装 Gitleaks
+RUN wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz -O /tmp/gitleaks.tar.gz && \
+    tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks && \
+    rm /tmp/gitleaks.tar.gz || true
+
+# 安装 TruffleHog
+RUN pip3 install trufflehog3 --break-system-packages || true
+
+# 安装 JWT Tool
+RUN git clone https://github.com/ticarpi/jwt_tool /opt/jwt_tool && \
+    pip3 install -r /opt/jwt_tool/requirements.txt --break-system-packages || true
+ENV PATH=$PATH:/opt/jwt_tool
+
+# 安装 XSStrike
+RUN git clone https://github.com/s0md3v/XSStrike /opt/xsstrike && \
+    pip3 install -r /opt/xsstrike/requirements.txt --break-system-packages || true
+
+# 安装 Commix
+RUN git clone https://github.com/commixproject/commix /opt/commix || true
+
+# 安装 SearchSploit
+RUN git clone https://gitlab.com/exploit-database/exploitdb /opt/exploitdb || true
+ENV PATH=$PATH:/opt/exploitdb
+
+# 安装 LinPEAS/WinPEAS
+RUN wget -q https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -O /usr/local/bin/linpeas && \
+    chmod +x /usr/local/bin/linpeas || true
+
+# 安装 LinEnum
+RUN git clone https://github.com/rebootuser/LinEnum /opt/linenum || true
+RUN chmod +x /opt/linenum/LinEnum.sh || true
+
+# 安装 Linux Exploit Suggester
+RUN git clone https://github.com/The-Z-Labs/linux-exploit-suggester /opt/linux-exploit-suggester || true
+RUN chmod +x /opt/linux-exploit-suggester/linux-exploit-suggester.sh || true
+
+# 安装 pspy
+RUN wget -q https://github.com/DominicBreuker/pspy/releases/download/v0.2.0/pspy64 -O /usr/local/bin/pspy && \
+    chmod +x /usr/local/bin/pspy || true
+
+# 安装 NetExec
+RUN pip3 install netexec --break-system-packages || true
+
+# 安装 Kerbrute
+RUN wget -q https://github.com/ropnop/kerbrute/releases/download/v1.0.3/kerbrute_linux_amd64 -O /usr/local/bin/kerbrute && \
+    chmod +x /usr/local/bin/kerbrute || true
+
+# 安装 Enum4linux-ng
+RUN git clone https://github.com/cddmp/enum4linux-ng /opt/enum4linux-ng && \
+    pip3 install -r /opt/enum4linux-ng/requirements.txt --break-system-packages || true
+RUN ln -s /opt/enum4linux-ng/enum4linux-ng.py /usr/local/bin/enum4linux-ng || true
+
+# 初始化 Metasploit 数据库（在容器启动时进行，避免构建时问题）
+RUN echo '#!/bin/bash\nservice postgresql start && msfdb init && service postgresql stop' > /tmp/init-msf.sh \
+    && chmod +x /tmp/init-msf.sh
+
+# 预热 Metasploit（加载模块缓存，加速后续启动）
+RUN /tmp/init-msf.sh && msfconsole -q -x "version; exit" || true
+
+# 安装 Python 依赖（用于 API 服务）
+COPY kali-requirements.txt /scanner/
+RUN pip3 install --no-cache-dir -r /scanner/kali-requirements.txt --break-system-packages
+
+# 复制 API 服务代码
+COPY kali-service/ /scanner/service/
+
+# 复制启动脚本
+COPY kali-entrypoint.sh /scanner/
+RUN chmod +x /scanner/kali-entrypoint.sh
+
+# 暴露 API 端口
+EXPOSE 8888
+
+# 健康检查
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8888/health || exit 1
+
+# 启动 API 服务
+CMD ["/scanner/kali-entrypoint.sh"]

@@ -1,0 +1,171 @@
+name: docker
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: vulnscanner
+      POSTGRES_INITDB_ARGS: "-c listen_addresses='*'"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - scanner_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB
+  mongodb:
+    image: mongo:7
+    restart: always
+    command: ["mongod", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - scanner_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - scanner_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/vulnscanner
+      - MONGODB_URL=mongodb://mongodb:27017
+      - REDIS_URL=redis://redis:6379/0
+      - KALI_SCANNER_URL=http://kali_scanner:8888
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      kali_scanner:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - tools_data:/app/data/tools
+    networks:
+      - scanner_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Celery Worker
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+    restart: always
+    environment:
+      - POSTGRES_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/vulnscanner
+      - MONGODB_URL=mongodb://mongodb:27017
+      - REDIS_URL=redis://redis:6379/0
+      - KALI_SCANNER_URL=http://kali_scanner:8888
+    depends_on:
+      - redis
+      - postgres
+      - mongodb
+      - kali_scanner
+    volumes:
+      - ./backend:/app
+      - tools_data:/app/data/tools
+    networks:
+      - scanner_network
+    command: celery -A tasks.celery_app worker --loglevel=info
+
+  # Kali Scanner Container
+  kali_scanner:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.kali
+    restart: always
+    ports:
+      - "8888:8888"
+    volumes:
+      - kali_tools:/scanner/tools
+      - kali_output:/scanner/output
+      - kali_logs:/scanner/logs
+      - kali_tmp:/scanner/tmp
+      - tools_data:/app/data/tools
+    networks:
+      - scanner_network
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Frontend (development)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=/api/v1
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - scanner_network
+    command: sh -c "npm install && npm run dev -- --host"
+
+networks:
+  scanner_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mongodb_data:
+  redis_data:
+  tools_data:
+  kali_tools:
+  kali_output:
+  kali_logs:
+  kali_tmp:

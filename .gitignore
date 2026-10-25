@@ -1,0 +1,7 @@
+# Office 临时锁文件不上传
+~$*
+
+# 系统垃圾
+Thumbs.db
+desktop.ini
+.DS_Store
